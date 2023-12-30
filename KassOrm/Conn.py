@@ -3,7 +3,7 @@ from mysql.connector import errorcode, pooling
 import json
 from datetime import datetime
 import os
-from KassOrm._config_ import connections 
+from .configs.database import connections 
 
 class Conn:       
     

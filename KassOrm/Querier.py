@@ -1,7 +1,7 @@
 import json
 from .Conn import Conn
 from datetime import datetime
-from ._config_ import useSofdelete
+from .configs.database import useSofdelete
 
 class Querier:
     

@@ -1,4 +1,7 @@
 
 
 class CLi:
-    pass
+    
+
+    def test(self):
+        return "cli test()"
