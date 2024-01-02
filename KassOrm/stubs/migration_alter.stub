@@ -8,14 +8,12 @@ class migrate(Migration):
     __comment__ = %COMMENT%
     
     def up(self): 
-        self.addColumn().string('name').add()     
-        self.addColumn().string('description').add()     
+        pass   
         
         
         
     def down(self): 
-        self.dropColumn('name').add()
-        self.dropColumn('description').add()
+        pass
         
 
         
