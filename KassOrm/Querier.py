@@ -268,7 +268,7 @@ class Querier:
         
         result =  self.__conn.getQuery(self.__SQL, self.__params).execute()      
         data = json.dumps(result, default=self.__convert_datetime_to_string)    
-        return data        
+        return json.loads(data)      
        
     
     def first(self):
@@ -361,16 +361,7 @@ class Querier:
         if where != "":
             sql += where + " "
         
-        #limit and offset               
-        limit = f" LIMIT {self.__limit}" if self.__limit != None else ""
-        limit = limit.strip()
-        if limit != "":
-            sql += limit + " "
-        
-        offset = f" OFFSET {self.__offset}" if self.__offset != None else ""
-        offset = offset.strip()
-        if offset != "":
-            sql += offset + " "
+ 
          
          
         #group
@@ -382,7 +373,18 @@ class Querier:
         orderby = "" if self.__order == None else f" ORDER BY {self.__order}"
         orderby =  orderby.strip()
         if orderby != "":
-            sql += orderby + " "            
+            sql += orderby + " "    
+            
+        #limit and offset               
+        limit = f" LIMIT {self.__limit}" if self.__limit != None else ""
+        limit = limit.strip()
+        if limit != "":
+            sql += limit + " "
+        
+        offset = f" OFFSET {self.__offset}" if self.__offset != None else ""
+        offset = offset.strip()
+        if offset != "":
+            sql += offset + " "        
         
         #join
         # join = "" 

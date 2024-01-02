@@ -1,6 +1,5 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
+from dotenv import dotenv_values
 
 """
 Conexões existentesCon
@@ -11,7 +10,7 @@ Drivers aceitos: Mysql
 connections = {
     
     "default": {
-        "driver": os.getenv("DB_DRIVER","mysql"),
+        # "driver": os.getenv("DB_DRIVER","mysql"),
         "user": os.getenv("DB_USER","root"),
         "password": os.getenv("DB_PASSWORD",""),
         "host": os.getenv("DB_HOST","127.0.0.1"),

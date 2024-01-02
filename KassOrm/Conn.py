@@ -12,7 +12,7 @@ class Conn:
         self.query = None          
         self.params = None           
         
-        config_pool = connections['default'] if conn == None else connections[conn] 
+        config_pool = connections['default'] if conn == None else connections[conn]        
         
         try:
             self.conn_pool = mysql.connector.pooling.MySQLConnectionPool(**config_pool)    
@@ -124,6 +124,20 @@ class Conn:
             
         return True     
 
+
+    def execute_create(self):
+        conn = self.conn_pool.get_connection()
+        if conn and conn.is_connected():
+            cursor = conn.cursor(dictionary=True, buffered=True)
+
+            cursor.execute(self.query, self.params)             
+                
+            conn.commit()   
+
+            cursor.close()
+            conn.close() 
+            
+        return True   
 
 
     def __test_pool(self):

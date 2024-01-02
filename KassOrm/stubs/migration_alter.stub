@@ -1,5 +1,5 @@
 
-from core.Database import Migration
+from KassOrm import Migration
 
 class migrate(Migration):   
 
@@ -8,12 +8,14 @@ class migrate(Migration):
     __comment__ = %COMMENT%
     
     def up(self): 
-        pass     
+        self.addColumn().string('name').add()     
+        self.addColumn().string('description').add()     
         
         
         
     def down(self): 
-        pass
+        self.dropColumn('name').add()
+        self.dropColumn('description').add()
         
 
         
