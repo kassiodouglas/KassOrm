@@ -1,4 +1,5 @@
 import os, glob, importlib
+from pathlib import Path
 from KassOrm._helpers import getStub
 from datetime import datetime as dt
 from KassOrm.Querier import Querier
@@ -33,6 +34,8 @@ class Migration:
     def make_file_migration(self, name_migration, dir_migrations, table, comment: str = ""):
         """Responsável por criar os arquivos de migração"""
         name_migration = name_migration.lower()
+        
+        dir_migrations = Path(dir_migrations)
 
         if os.path.isdir(dir_migrations) == False:
             os.makedirs(dir_migrations)
@@ -126,7 +129,6 @@ class Migration:
         try:
             self.generate_query()  
             
-            print('1' + self.__sql)  
             result = Conn().getQuery(self.__sql, self.__params).execute_create()
             return result
         except Exception as err:
@@ -188,11 +190,11 @@ class Migration:
 
         dir_module, migrations = self.catch_module_and_migrations(dir_migrations)
             
-
+        step = 1
         for migration in migrations:
             file = os.path.basename(migration).replace(".py", "")  
             
-
+            
             if self.has_migration_executed(file) == 'null':       
                 module, result = self.execute_migrate(f"{dir_module}.{file}")
 
@@ -201,12 +203,14 @@ class Migration:
                     print(f"{file} {self.color('green')}[OK]{self.color()}")
                 else:
                     print(f"{file} {self.color('red')}[Fail]{self.color()}")
-                    print("execute_all_migrations: " + result)
+                    
+                    self.rollback(dir_migrations, step)
                     return False
 
             else:
                 print(f"{file} {self.color('yellow')}[ALREADY EXISTS]{self.color()}")
 
+            step +=1
 
         
         return True
@@ -227,6 +231,8 @@ class Migration:
             print(f"{file} {self.color('yellow')} [DROPPED]" + self.color())
             
         return True
+
+
 
 
 
@@ -427,6 +433,8 @@ class Migration:
   
 
     def migrate(self, dir_migrations):
+        
+        dir_migrations = Path(dir_migrations)
         hasCreated = self.create_table_migrations()
 
         if hasCreated==False:
@@ -440,15 +448,16 @@ class Migration:
 
 
     def rollback(self, dir_migrations, steps):
+       
+       dir_migrations = Path(dir_migrations) 
+        
        migrations = Querier().table('_migrations_').orderBy("id DESC").limit(steps).get()
        
        dir_module = str(dir_migrations).replace("\\", ".")
         
        for migration in migrations:
-            file = migration['migration'] 
-           
+            file = migration['migration']            
 
-            print("file" + file)
             module, result = self.execute_rollback(f"{dir_module}.{file}")
             
             if result == False:

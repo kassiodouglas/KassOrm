@@ -6,8 +6,6 @@ Gerenciamento de migrations, modelos, seeders e gerador de query
 
 ## Indice
 
-[CLI](#cli) <!--in dev -->
-
 [Classe Conn](#classe-conn-configuração-de-banco-de-dados)<!--in dev -->
 
 [Classe Migration](#classe-migration)<!--in dev -->
@@ -36,8 +34,7 @@ Gerenciamento de migrations, modelos, seeders e gerador de query
 -   [SoftDelete](#softdelete-1)
 
 
-
- [Classe Seeder](#classe-seeder) <!--in dev -->
+[Classe Seeder](#classe-seeder) <!--in dev -->
 
 
 <br><br>

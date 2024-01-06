@@ -2,8 +2,8 @@ import os
 from dotenv import dotenv_values
 
 """
-Conexões existentesCon
-Configira aqui seus bnaco de dados
+Conexões existentes
+Configure aqui seus bnaco de dados
 
 Drivers aceitos: Mysql
 """

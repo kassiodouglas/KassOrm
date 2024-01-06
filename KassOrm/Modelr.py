@@ -1,5 +1,8 @@
 from .Querier import Querier
 import json
+from pathlib import Path
+import os
+from KassOrm._helpers import getStub
 
 class Modelr():
     
@@ -25,26 +28,29 @@ class Modelr():
         return self.execute('first')
     
     
-    def get(self): 
+    def get(self):   
         return self.execute('get')
     
 
-    def execute(self, type:str):
+    def execute(self, type:str):    
         
-        if type == 'get':
+        if type == 'get':  
             data = self.query.get() 
+            data = self.check_relationships(data)  
             
-        elif type == 'first':
-            data = self.query.first() 
+        elif type == 'first':       
+            data = self.query.first()           
+            data = self.check_relationships(data, True)  
             
         elif type == 'onlysql':
             self.__queries.insert(0,{"query":self.query.toSql(),"params":self.query.toParams()})
-            data = self.query.get()  
-            self.check_relationships(data, False, True) 
-            return
+            data = self.query.get()   
             
-            
-        data = self.check_relationships(data, False)  
+            if data != None:
+                self.check_relationships(data, False, True) 
+            return            
+  
+       
        
         return data 
       
@@ -54,6 +60,7 @@ class Modelr():
     
     def toSql(self):        
         query = self.query.toSql()
+  
         for key, value in  self.query.toParams().items():              
             query = query.replace(f"%({key})s",str(value))
                               
@@ -96,6 +103,10 @@ class Modelr():
         
     def select(self, columns:list):
         self.query.select(columns)
+        return self
+    
+    def notSelect(self, columns:list):
+        self.query.notSelect(columns)
         return self
     
     
@@ -268,25 +279,23 @@ class Modelr():
         return self
     
             
-    def check_relationships(self, data, first = False, onlySql = False):   
-              
-        data_json = json.loads(data)           
+    def check_relationships(self, data, first = False, onlySql = False):                 
+        
+        data_json = data if type(data) == list else data          
         data_json = data_json if type(data_json) == list else [data_json]  
         
-        # print(self.__has)
-        # print("\n")                    
         
         for dictr in self.__has:  
             for rel, value in dictr.items():        
-                if value['type'] in ['many','one']:
+                if value['type'] in ['many','one']:              
                     data_json = self.check_relationships_one_many(rel, value, data_json, onlySql)               
             
-                elif value['type'] in ['manytomany']:
+                elif value['type'] in ['manytomany']:                    
                     data_json = self.check_relationships_manytomany(rel, value, data_json, onlySql)
                         
-            
+   
         if onlySql==False:   
-            return data_json[0] if first else data_json
+            return data_json[0] if first == True else data_json
         
       
     def check_relationships_one_many(self, rel, value, data_json, onlySql):                   
@@ -299,7 +308,7 @@ class Modelr():
         self.__queries.append({"query":query_related.toSql(),"params":query_related.toParams()})            
             
         if onlySql==False:    
-            data_rel = json.loads(query_related.get())                       
+            data_rel = query_related.get()                      
             if all:   
                 for row in data_json:           
                     row[rel] = None                                       
@@ -329,33 +338,39 @@ class Modelr():
         query_intermediated = Querier(self.__conn__).table(value['intermediate_table']).whereIn(value['intermediate_local_key'], local_keys)                
         self.__queries.append({"query":query_intermediated.toSql(),"params":query_intermediated.toParams()}) 
         
-        
+   
         #resgatar ids do modelo relacionado   
         data_intermediate_json = query_intermediated.get()
-        data_intermediate_json = json.loads(data_intermediate_json)           
+        # data_intermediate_json = json.loads(data_intermediate_json)           
         data_intermediate_json = data_intermediate_json if type(data_intermediate_json) == list else [data_intermediate_json]
         intemediate_model_keys = list(set(row[value['intermediate_model_key']] for row in data_intermediate_json))
 
-    
-        
-        #acessar table do model   
-        query_model = Querier(self.__conn__).table(value['model_table']).whereIn(value['model_key'], intemediate_model_keys)                
-        self.__queries.append({"query":query_model.toSql(),"params":query_model.toParams()})    
-        
+            
+        if intemediate_model_keys != []:
+            #acessar table do model   
+            query_model = Querier(self.__conn__).table(value['model_table']).whereIn(value['model_key'], intemediate_model_keys)                
+            self.__queries.append({"query":query_model.toSql(),"params":query_model.toParams()})    
+            data_rel = query_model.get()
+        else:
+            data_rel = []         
+   
         
         
         #mesclando relacionamentos
-        data_rel = json.loads(query_model.get()) 
+        # data_rel = json.loads(query_model.get()) 
         local_counter = 0
         for local_row in data_json:          
             local_counter +=1
+            
+            if rel not in local_row:  
+                local_row[rel] = None 
             
             inter_counter = 0            
             for interdata_row in data_intermediate_json:  
                 inter_counter +=1
                 
-                if rel not in local_row:  
-                    local_row[rel] = None 
+                # if rel not in local_row:  
+                #     local_row[rel] = None 
                               
                 model_counter = 0           
                 for model_row in data_rel: 
@@ -374,8 +389,43 @@ class Modelr():
                         if local_row[rel] == None:  
                             local_row[rel] = [] 
                             
-                        local_row[rel].append(model_row)       
-                          
+                        local_row[rel].append(model_row)                                 
                 
-                    
-        return data_json   
+        
+        return data_json
+    
+    
+    
+    
+    def make_file_model(self, dir_models, table, comment: str = ""):
+        """Responsável por criar os arquivos de modelos"""
+        # table = table.
+        
+        dir_models = Path(dir_models)
+        # modelname = table.replace("_"," ").capitalize().replace(" ","")
+        
+        parts = table.split('_')
+        modelname = parts[0] + ''.join(x.title() for x in parts[1:])
+        modelname = modelname.capitalize()
+        filename = modelname + ".py"
+
+        if os.path.isdir(dir_models) == False:
+            os.makedirs(dir_models)
+            
+        if os.path.isfile(f"{dir_models}/{filename}") == True:            
+            return f'{modelname} - Model already created'
+        
+        content = getStub("model.stub")
+
+
+        content = content.replace("%COMMENT%", f"'{comment.lower()}'" if comment != "" else "''")
+        content = content.replace("%TABLE%", table)
+        content = content.replace("%MODELNAME%", modelname)
+        
+
+        
+        file = open(f"{dir_models}/{filename}", "w+", encoding="utf-8")
+        file.writelines(content)
+        file.close()
+        
+        return True

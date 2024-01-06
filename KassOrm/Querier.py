@@ -1,7 +1,11 @@
 import json
 from .Conn import Conn
 from datetime import datetime
-from .configs.database import useSofdelete
+import os, importlib
+
+config_location = os.getenv("CONFIG_PATH", "KassOrm.configs.database")
+
+useSofdelete = importlib.import_module(config_location).useSofdelete
 
 class Querier:
     
@@ -11,13 +15,15 @@ class Querier:
         
         __useSoftDelete = useSofdelete['default'] if conn == None else useSofdelete[conn]     
         
-        self.__softDelete = softDelete if softDelete == False else __useSoftDelete
+        self.__softDelete = False if softDelete == None else softDelete if softDelete != False else __useSoftDelete
         
         self.__withTrashed = False
         
         self.__params = {}    
         
         self.__columns = [{"name":"*"}]
+        
+        self.__not_columns = []
         
         self.__table = None
         
@@ -66,6 +72,15 @@ class Querier:
                 self.__columns.append({"name":col}) 
             
         return self
+    
+    
+    def notSelect(self, columns:list[str]):
+        self.__not_columns = []
+    
+        for col in columns:  
+            self.__not_columns.append(col) 
+            
+        return self
         
     
     def table(self, table:str, alias:str = None):
@@ -89,9 +104,9 @@ class Querier:
     
     #joins-------------------------------------------------------------
         
-    def join(self, table, model_key, local_key):
-        self.__join.append(f" LEFT JOIN {table} ON ({table}.{model_key} = {self.__table}.{local_key}) ")    
-        return self
+    # def join(self, table, model_key, local_key):
+    #     self.__join.append(f" LEFT JOIN {table} ON ({table}.{model_key} = {self.__table}.{local_key}) ")    
+    #     return self
     
     
     
@@ -168,7 +183,19 @@ class Querier:
         self.__conditional.append({"where":where, "conector":conector})    
         return self
     
-    
+    def whereBetween(self, col:str, date1:str, date2:str, conector:str="AND"):
+               
+        keyParamValue, keyParam1 = self.__paramKey(f"like{col}")
+        self.__params[keyParamValue] = date1     
+        
+        keyParamValue, keyParam2 = self.__paramKey(f"like{col}")
+        self.__params[keyParamValue] = date2
+        
+        where = f" {col} BETWEEN {keyParam1} AND {keyParam2} " 
+        
+        self.__conditional.append({"where":where, "conector":conector})    
+        
+        return self
        
     # pos condicional   -------------------------------------------------------------         
     
@@ -234,8 +261,7 @@ class Querier:
         
     def update(self, data:dict):   
         
-        self.__construct_update_query(data)        
-
+        self.__construct_update_query(data)
         return self.__conn.getQuery(self.__SQL,  self.__params).execute_update()    
        
 
@@ -268,7 +294,17 @@ class Querier:
         
         result =  self.__conn.getQuery(self.__SQL, self.__params).execute()      
         data = json.dumps(result, default=self.__convert_datetime_to_string)    
-        return json.loads(data)      
+        data = json.loads(data) 
+                    
+        if type(data) == list:
+            for row in data:
+                cols_to_remove = [col for col in row.keys() if col in self.__not_columns]
+                
+                for col in cols_to_remove:
+                    if col in self.__not_columns:
+                        row.pop(col)
+        
+        return data   
        
     
     def first(self):
@@ -276,7 +312,15 @@ class Querier:
         
         result = self.__conn.getQuery(self.__SQL, self.__params).execute(False) 
         data = json.dumps(result, default=self.__convert_datetime_to_string)    
-        return data       
+        data = json.loads(data)    
+        
+        if type(data) == dict:
+            cols_to_remove = [col for col in data.keys() if col in self.__not_columns]
+            for col in cols_to_remove:
+                if col in self.__not_columns:
+                    data.pop(col)
+        
+        return data
 
     
     def toSql(self):
@@ -319,12 +363,13 @@ class Querier:
         columns = ""
         for col in self.__columns:
             
-            colAlias = ''
-            if 'alias' in col:
-                if col['alias'] != '':
-                    colAlias = f" AS {col['alias']}"
+            if col['name'] not in self.__not_columns:                            
+                colAlias = ''
+                if 'alias' in col:
+                    if col['alias'] != '':
+                        colAlias = f" AS {col['alias']}"
             
-            columns += f"{tableColAlias}{col['name']}{colAlias}, "             
+                columns += f"{tableColAlias}{col['name']}{colAlias}, "             
         columns = columns[:-2]           
         if columns != "":
             sql += columns.strip() +" "
@@ -342,13 +387,11 @@ class Querier:
       
         
         
-        
         #condicional
         if self.__softDelete != False:
             if self.__withTrashed == False:
                 self.whereIsNull(self.__softDelete)
-          
-
+                
             
         where = ""
         for wheres in self.__conditional: 
@@ -384,17 +427,7 @@ class Querier:
         offset = f" OFFSET {self.__offset}" if self.__offset != None else ""
         offset = offset.strip()
         if offset != "":
-            sql += offset + " "        
-        
-        #join
-        # join = "" 
-        # for jn in self.__join:
-        #     join += jn
-        # join = None if join == "" else join.strip()
-                            
-        # self.__SQL = f"SELECT {columns} FROM {self.__table} {tableAlias} {where} {limit} {offset} {groupby}"
-     
-        
+            sql += offset + " "    
             
         
         

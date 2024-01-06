@@ -1,9 +1,11 @@
 import mysql.connector
-from mysql.connector import errorcode, pooling
-import json
+from mysql.connector import errorcode
 from datetime import datetime
 import os
-from .configs.database import connections 
+import importlib
+
+config_location = os.getenv("CONFIG_PATH", "KassOrm.configs.database")
+connections = importlib.import_module(config_location).connections
 
 class Conn:       
     
@@ -96,18 +98,21 @@ class Conn:
         
         
     def execute_update(self):
-        conn = self.conn_pool.get_connection()
-        if conn and conn.is_connected():
-            cursor = conn.cursor(dictionary=True, buffered=True)
+        try:
+            conn = self.conn_pool.get_connection()
+            if conn and conn.is_connected():
+                cursor = conn.cursor(dictionary=True, buffered=True)
 
-            cursor.execute(self.query, self.params)             
+                cursor.execute(self.query, self.params)             
+                    
+                conn.commit()   
+
+                cursor.close()
+                conn.close() 
                 
-            conn.commit()   
-
-            cursor.close()
-            conn.close() 
-            
-        return True     
+            return True    
+        except Exception as err:
+            return err 
 
 
     def execute_delete(self):
