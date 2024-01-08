@@ -1,4 +1,6 @@
-import os, glob, importlib
+import os
+import glob
+import importlib
 from pathlib import Path
 from KassOrm._helpers import getStub
 from datetime import datetime as dt
@@ -25,16 +27,15 @@ class Migration:
         self.__column = {}
 
         self.__primary_key = None
-        
-        self.__rollback = False
-        
-        self.__add_column = []
 
+        self.__rollback = False
+
+        self.__add_column = []
 
     def make_file_migration(self, name_migration, dir_migrations, table, comment: str = ""):
         """Responsável por criar os arquivos de migração"""
         name_migration = name_migration.lower()
-        
+
         dir_migrations = Path(dir_migrations)
 
         if os.path.isdir(dir_migrations) == False:
@@ -55,7 +56,6 @@ class Migration:
         file.writelines(content)
         file.close()
 
-
     def generate_query_create(self):
         """Gera uma query de criação de tabela"""
         self.__sql = "CREATE TABLE IF NOT EXISTS {} (".format(self.__table__)
@@ -72,12 +72,10 @@ class Migration:
 
         self.__sql = self.__sql[:-2]
         self.__sql += ");"
-        
-       
-       
+
     def generate_query_alter(self):
         """Gera uma query de alteração de tabela"""
-        
+
         self.__sql = "ALTER TABLE {} ".format(self.__table__)
 
         for col in self.__columns:
@@ -87,82 +85,68 @@ class Migration:
 
             self.__sql += f"{column}, "
 
-
         self.__sql = self.__sql[:-2]
-        
-
 
     def generate_query_rollback(self):
         """Gera uma query de alteração, drop ou exclusão de tabela"""
-        
-        pass 
 
-
+        pass
 
     def generate_query(self):
         """Gerencia qual query gerar"""
-        
-        
+
         # up e down configura as colunas e o q for para gerar a query
         if self.__rollback == False:
             self.up()
         else:
             self.down()
-            
-            
+
         # gera a query de acordo com as configs de up ou down
         if self.__type__ == "create" and self.__rollback == False:
-           self.generate_query_create()
+            self.generate_query_create()
 
-        elif self.__type__ == "alter": 
+        elif self.__type__ == "alter":
             self.generate_query_alter()
-
 
     def setRollback(self):
         self.__rollback = True
         return self
 
-
     def execute(self):
         """Principal método de execução da migration, gera o sql do arquivo migration e o executa"""
- 
+
         try:
-            self.generate_query()  
-            
+            self.generate_query()
+
             result = Conn().getQuery(self.__sql, self.__params).execute_create()
             return result
         except Exception as err:
             print("execute: " + str(err))
             return False
 
-
-    def execute_migrate(self, module_name:str):
-        """Executa o metodo execute da classe migrate do arquivo migration""" 
+    def execute_migrate(self, module_name: str):
+        """Executa o metodo execute da classe migrate do arquivo migration"""
         module = importlib.import_module(module_name)
         return module.migrate(), module.migrate().execute()
-    
-    
-    def execute_rollback(self, module_name:str):
+
+    def execute_rollback(self, module_name: str):
         module = importlib.import_module(module_name)
         return module.migrate(), module.migrate().setRollback().execute()
-    
-    
+
     def catch_module_and_migrations(self, dir_migrations):
         """Retorna o nome do diretório como módulo e todas as migrações do diretorio"""
         migrations = glob.glob(os.path.join(dir_migrations, "*.py"))
         dir_module = str(dir_migrations).replace("\\", ".")
         return dir_module, migrations
 
-
-    def has_migration_executed(self, migration:str):
+    def has_migration_executed(self, migration: str):
         """Verifica se a migração foi executada, salva na tabela _migrations_"""
         try:
-            return Querier().table("_migrations_").where({"migration":migration}).first()
+            return Querier().table("_migrations_").where({"migration": migration}).first()
         except Exception as err:
             print(str(err))
             return False
-     
-     
+
     def save_migration_executed(self, migration: str, description: str = None):
         """Salva registro da migração executada na tabela _migrations_"""
         try:
@@ -171,31 +155,30 @@ class Migration:
             #     sql, {"migration": migration, "description": description}
             # ).execute_insert()
 
-            now = dt.now() 
-            Querier().table('_migrations_').insert({"date":now,"migration":migration,"description":description})
+            now = dt.now()
+            Querier().table('_migrations_').insert(
+                {"date": now, "migration": migration, "description": description})
             return True
         except Exception as err:
-            print("save_migration_executed:"  +str(err))
+            print("save_migration_executed:" + str(err))
             return False
-    
-    
-    def delete_migration_executed(self, id):
-        
-        Querier().table('_migrations_').where({"id":id}).delete()
-        return True
 
+    def delete_migration_executed(self, id):
+
+        Querier().table('_migrations_').where({"id": id}).delete()
+        return True
 
     def execute_all_migrations(self, dir_migrations: str):
         """Executa todas as migrações do diretorio informado"""
 
-        dir_module, migrations = self.catch_module_and_migrations(dir_migrations)
-            
+        dir_module, migrations = self.catch_module_and_migrations(
+            dir_migrations)
+
         step = 1
         for migration in migrations:
-            file = os.path.basename(migration).replace(".py", "")  
-            
-            
-            if self.has_migration_executed(file) == 'null':       
+            file = os.path.basename(migration).replace(".py", "")
+
+            if self.has_migration_executed(file) == 'null':
                 module, result = self.execute_migrate(f"{dir_module}.{file}")
 
                 if result == True:
@@ -203,18 +186,17 @@ class Migration:
                     print(f"{file} {self.color('green')}[OK]{self.color()}")
                 else:
                     print(f"{file} {self.color('red')}[Fail]{self.color()}")
-                    
+
                     self.rollback(dir_migrations, step)
                     return False
 
             else:
-                print(f"{file} {self.color('yellow')}[ALREADY EXISTS]{self.color()}")
+                print(
+                    f"{file} {self.color('yellow')}[ALREADY EXISTS]{self.color()}")
 
-            step +=1
+            step += 1
 
-        
         return True
-
 
     def drop_all_migrations(self, dir_migrations: str):
         migrations = glob.glob(os.path.join(dir_migrations, "*.py"))
@@ -225,27 +207,14 @@ class Migration:
 
         for migration in migrations:
             file = os.path.basename(migration).replace(".py", "")
-            
-            module, result = self.execute_rollback(f"{dir_module}.{file}")            
+
+            module, result = self.execute_rollback(f"{dir_module}.{file}")
 
             print(f"{file} {self.color('yellow')} [DROPPED]" + self.color())
-            
+
         return True
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # migration methods
 
     def up(self):
         return self
@@ -253,7 +222,7 @@ class Migration:
     def down(self):
         return self
 
-    #  TIPOSS ------------------
+    #  colunas ------------------
 
     def add(self):
         self.__columns.append(self.__column)
@@ -267,8 +236,6 @@ class Migration:
         self.__column["isNull"] = "NOT NULL"
         self.__column["autoIncrement"] = "AUTO_INCREMENT"
         self.__column["primary_key"] = "PRIMARY KEY"
-        
-        
 
         return self
 
@@ -327,6 +294,8 @@ class Migration:
 
         return self
 
+    # props das colunas-----------
+
     def nullable(self):
         self.__column["isNull"] = "NULL"
 
@@ -365,7 +334,7 @@ class Migration:
 
         return self
 
-    # TOOLS-----------
+    # rollback--------------------
 
     def addColumn(self):
         self.__column["add"] = "ADD COLUMN "
@@ -376,16 +345,18 @@ class Migration:
         self.__column["drop"] = "DROP COLUMN {} ".format(name)
         return self
 
-    def after(self, column: string):
+    def after(self, column: str):
         self.__column["after"] = f"AFTER {column}"
         return self
 
-    def first(self, column: string):
+    def first(self, column: str):
         self.__column["first"] = f"FIRST {column}"
         return self
 
     def dropTableIfExists(self):
         self.__sql = "DROP TABLE IF EXISTS {}".format(self.__table__)
+
+    # utils ----------------------
 
     def color(self, code=""):
         """Cores para usar no terminal"""
@@ -428,44 +399,35 @@ class Migration:
             print("drop_table_migrationsstr: "+(err))
             return False
 
- 
-
-  
-
     def migrate(self, dir_migrations):
-        
+
         dir_migrations = Path(dir_migrations)
         hasCreated = self.create_table_migrations()
 
-        if hasCreated==False:
+        if hasCreated == False:
             return False
-        
+
         result = self.execute_all_migrations(dir_migrations)
 
-        return  result
-
-
-
+        return result
 
     def rollback(self, dir_migrations, steps):
-       
-       dir_migrations = Path(dir_migrations) 
-        
-       migrations = Querier().table('_migrations_').orderBy("id DESC").limit(steps).get()
-       
-       dir_module = str(dir_migrations).replace("\\", ".")
-        
-       for migration in migrations:
-            file = migration['migration']            
+
+        dir_migrations = Path(dir_migrations)
+
+        migrations = Querier().table('_migrations_').orderBy("id DESC").limit(steps).get()
+
+        dir_module = str(dir_migrations).replace("\\", ".")
+
+        for migration in migrations:
+            file = migration['migration']
 
             module, result = self.execute_rollback(f"{dir_module}.{file}")
-            
+
             if result == False:
                 print(result)
                 return False
-            
-            self.delete_migration_executed(migration['id'] )
 
+            self.delete_migration_executed(migration['id'])
 
-       
-       return True
+        return True

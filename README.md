@@ -1,4 +1,4 @@
-# KassORM 1.0.0
+# KassORM
 
 Gerenciamento de migrations, modelos, seeders e gerador de query
 <p>Criado com o intuito de abstratir toda uma modelagem de dados, de forma fácil. Sua criação é baseada na biblioteca Eloquent vista no Laravel, framework PHP. A principio, não há muitos ORMs para python que são intuitivos no uso, inicialemente, neste pacote, era utilizado o SqlAlchemy, mas seu uso e documentação são complicados, com uma curva grande para aprendizado, não desmerecendo ele, sabemos o quão robusto e estável está atualmente, mas precisavamos de algo mais direto e que entendessemos a fundo o uso.</p>
@@ -6,11 +6,13 @@ Gerenciamento de migrations, modelos, seeders e gerador de query
 
 ## Indice
 
-[Classe Conn](#classe-conn-configuração-de-banco-de-dados)<!--in dev -->
 
-[Classe Migration](#classe-migration)<!--in dev -->
+[Migration](#migration)
+-   [Criar e executar](#criar-e-executar)
+-   [Configurando uma migration](#configurando-uma-migration)
+-   [Lista de tipos de campos e outras ferramentas](#lista-de-tipos-de-campos-e-outras-ferramentas)
 
-[Classe Querier](#classe-querier)
+[Querier](#querier)
 -   [Select](#select)
     -   [Where](#where)
     -   [Group e Order](#group-e-order)
@@ -20,7 +22,7 @@ Gerenciamento de migrations, modelos, seeders e gerador de query
 -   [SoftDelete](#softdelete)
 
 
-[Classe Modelr](#classe-modelr)
+[Modelr](#modelr)
 -   [Select](#select-1)
     -   [Where](#where-1)
     -   [Group e Order](#group-e-order-1)
@@ -34,35 +36,102 @@ Gerenciamento de migrations, modelos, seeders e gerador de query
 -   [SoftDelete](#softdelete-1)
 
 
-[Classe Seeder](#classe-seeder) <!--in dev -->
+<!-- [Classe Seeder](#seeder) in dev -->
 
 
-<br><br>
 
-## CLI
+<br><br><br><br>
 
-### Em desenvolvimento....
-
-<br><br>
-
-## Classe Conn (configuração de banco de dados)
-Veja aqui como passar os dados de configurações de seus banco de dados.
-### Em desenvolvimento....
-
-<br><br>
-
-## Classe Migration
+## Migration
 Uso de migrations são importantes para manter o versionamento do banco de dados. Veja abaixo como utilizar.
 
-### Em desenvolvimento....
+### Criar e executar 
+Utilize o metodo 'make_file_migration()' informando o nome,  diretório, nome da tabela e opcionalmente um comentário. O nome da migration tem como prefixos 'create_' e 'alter_', então gere o nome com eles para que as regras de cada tipo sejam setadas no arquivo gerado.
+
+```
+name_migration = "create_users"
+dir_migration = "database"
+table = "users"
+comment = "criação da tabela de usuários"
+Migration().make_file_migration(name_migration, dir_migration, table, comment)
+````
+
+
+Para executar as migrations informe apenas o local onde elas estão no método "migrate()", este comando também cria uma tabela ( _migrations_ ) para gerenciamento de qual migration já foi executada.
+
+```
+dir_migration = "database"
+Migration().migrate(dir_migration)
+```
+
+### Drop
+Para reiniciar o processo, fazendo o rollback das migrations, use o metodo 'drop_all_migrations()'
+
+```
+dir_migration = "database"
+Migration().drop_all_migrations(dir_migration)
+```
+
+
+### Configurando uma migration
+O arquivo gerado terá a seguinte aparência:
+
+```
+
+from KassOrm import Migration
+
+class migrate(Migration): 
+  
+    __type__ = 'create'  
+    __table__ = 'users'
+    __comment__ = 'criação da tabela de usuários'
+    
+    def up(self):
+        self.id().add()
+        self.datetime('created_at').add()       
+        
+        
+    def down(self): 
+        self.dropTableIfExists()        
+        
+```
+Um valor opcional  *__ conn __* pode ser passado na classe, para determinar qual conexão usar, essa conexão deverá estar configurada em *configs/database*. Não informando será usado a conexão padrão.
+
+É aqui que será criado os campos da tabela e seus relacionamentos. o metodo up(), é executado quando a migration é executada para criar, nesse caso, uma tabela, o down(), é o metodo responsavel por fazer o inverso, no caso dropar a tabela.
+
+
+### Lista de tipos de campos e outras propriedades:
+
+```
+# colunas
+id()
+string(name, qnt)
+bigInteger(name)
+bigIntegerUnisigned(name)
+text(name)
+enum(name, values)
+integer(name,qnt)
+datetime(name)
+
+# propriedades para as colunas
+nullable()
+unsigned()
+comment(comment)
+unique(columns,name)
+current_timestamp()
+update_timestamp()
+addColumn()
+dropColumn(name)
+after(column)
+first(column)
+dropTableIfExists()
+```
 
 
 
 
-
-<br><br>
-
-## Classe Querier
+<br><br><br><br>
+## Querier
 Criador de querys para maior segurança e abstração de banco de dados.
 
  Querier() recebe como parametro o nome da conexão (Querier('api')) que estará configurado dentro das configurações, caso não seja informada, será usada a conexão padrão (default).
@@ -115,7 +184,7 @@ Limit e offset
 query.limit(10).offset(2).get()
 ```
 
-#### Where
+### Where
 Para filtrar os dados podemos usar vários metodos encadeados.
 ```
 query.where({"name":"admin,"id":1}).get()
@@ -217,16 +286,16 @@ OBS: Não esqueça de sempre utilizar a clausula *where* quando for excluir regi
 </b></p>
 
 
-<br><br>
 
 
 
 
 
 
-<br><br>
 
-## Classe Modelr
+<br><br><br><br>
+
+## Modelr
 Classe para abstrair a classe Querier() e facilitar o uso dos dados nas tabelas, relacionamentos e informações sobre as queries de forma facilitada.
 
 
@@ -279,7 +348,7 @@ Limit e offset
 User().where({"name":"admin,"id":1}).limit(10).offset(2).get()
 ```
 
-#### Where
+### Where
 Para filtrar os dados podemos usar vários metodos encadeados.
 ```
 User().where({"name":"admin,"id":1}).get()
@@ -677,14 +746,4 @@ OBS: Não esqueça de sempre utilizar a clausula *where* quando for excluir regi
 
 
 
-
-
-
-
-<br><br>
-
-## Classe Seeder
-Alimente seu banco de forma automatizada, com dados fakes ou uma lista pré configurada.
-
-### Em desenvolvimento....
 
