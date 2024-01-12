@@ -17,6 +17,11 @@ class Conn:
 
         config_pool = connections['default'] if conn == None else connections[conn]
 
+        config_pool['pool_name'] = 'ormkass_pool'
+        config_pool['connect_timeout'] = 60
+        config_pool['pool_size'] = 5
+        config_pool['pool_reset_session'] = True
+
         try:
             self.conn_pool = mysql.connector.pooling.MySQLConnectionPool(
                 **config_pool)
