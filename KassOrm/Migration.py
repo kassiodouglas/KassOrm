@@ -14,10 +14,9 @@ class Migration:
     __type__ = None
     __table__ = None
     __comment__ = None
-
     __rollback__ = False
 
-    def __init__(self) -> None:
+    def __init__(self, conn=None) -> None:
         self.__sql = ""
 
         self.__params = {}
@@ -31,6 +30,8 @@ class Migration:
         self.__rollback = False
 
         self.__add_column = []
+
+        self.__conn = conn if conn != None else self.__conn__
 
     def make_file_migration(self, name_migration, dir_migrations, table, comment: str = ""):
         """Responsável por criar os arquivos de migração"""
@@ -114,14 +115,14 @@ class Migration:
 
     def execute(self):
         """Principal método de execução da migration, gera o sql do arquivo migration e o executa"""
-
         try:
             self.generate_query()
-
-            result = Conn().getQuery(self.__sql, self.__params).execute_create()
+            result = Conn(self.__conn).getQuery(
+                self.__sql, self.__params).execute_create()
             return result
         except Exception as err:
-            print("execute: " + str(err))
+            print("\n Execute: " + str(err))
+            print("\nSQL: " + self.__sql)
             return False
 
     def execute_migrate(self, module_name: str):
@@ -136,13 +137,13 @@ class Migration:
     def catch_module_and_migrations(self, dir_migrations):
         """Retorna o nome do diretório como módulo e todas as migrações do diretorio"""
         migrations = glob.glob(os.path.join(dir_migrations, "*.py"))
-        dir_module = str(dir_migrations).replace("\\", ".")
+        dir_module = str(dir_migrations).replace("\\", ".").replace("/", ".")
         return dir_module, migrations
 
     def has_migration_executed(self, migration: str):
         """Verifica se a migração foi executada, salva na tabela _migrations_"""
         try:
-            return Querier().table("_migrations_").where({"migration": migration}).first()
+            return Querier(conn=self.__conn).table("_migrations_").where({"migration": migration}).first()
         except Exception as err:
             print(str(err))
             return False
@@ -156,7 +157,7 @@ class Migration:
             # ).execute_insert()
 
             now = dt.now()
-            Querier().table('_migrations_').insert(
+            Querier(conn=self.__conn).table('_migrations_').insert(
                 {"date": now, "migration": migration, "description": description})
             return True
         except Exception as err:
@@ -165,7 +166,8 @@ class Migration:
 
     def delete_migration_executed(self, id):
 
-        Querier().table('_migrations_').where({"id": id}).delete()
+        Querier(conn=self.__conn).table(
+            '_migrations_').where({"id": id}).delete()
         return True
 
     def execute_all_migrations(self, dir_migrations: str):
@@ -178,7 +180,7 @@ class Migration:
         for migration in migrations:
             file = os.path.basename(migration).replace(".py", "")
 
-            if self.has_migration_executed(file) == 'null':
+            if self.has_migration_executed(file) == None:
                 module, result = self.execute_migrate(f"{dir_module}.{file}")
 
                 if result == True:
@@ -199,11 +201,12 @@ class Migration:
         return True
 
     def drop_all_migrations(self, dir_migrations: str):
-        migrations = glob.glob(os.path.join(dir_migrations, "*.py"))
+
+        dir_module, migrations = self.catch_module_and_migrations(
+            dir_migrations)
+        migrations = migrations[::-1]
 
         self.drop_table_migrations()
-
-        dir_module = str(dir_migrations).replace("\\", ".")
 
         for migration in migrations:
             file = os.path.basename(migration).replace(".py", "")
@@ -296,6 +299,12 @@ class Migration:
 
     # props das colunas-----------
 
+    def foreign(self, table, key, local_key):
+        self.__column["foreign"] = "FOREIGN KEY ({}) REFERENCES {}({})".format(
+            local_key, table, key)
+
+        return self
+
     def nullable(self):
         self.__column["isNull"] = "NULL"
 
@@ -384,7 +393,7 @@ class Migration:
                 PRIMARY KEY (`id`)
                 );
             """
-            Conn().getQuery(sql, {}).execute_create()
+            Conn(conn=self.__conn).getQuery(sql, {}).execute_create()
             return True
         except Exception as err:
             print("create_table_migrations: "+str(err))
@@ -393,7 +402,7 @@ class Migration:
     def drop_table_migrations(self):
         try:
             sql = "DROP TABLE IF EXISTS _migrations_"
-            Conn(None).getQuery(sql, None).execute_create()
+            Conn(conn=self.__conn).getQuery(sql, None).execute_create()
             return True
         except Exception as err:
             print("drop_table_migrationsstr: "+(err))
@@ -415,7 +424,8 @@ class Migration:
 
         dir_migrations = Path(dir_migrations)
 
-        migrations = Querier().table('_migrations_').orderBy("id DESC").limit(steps).get()
+        migrations = Querier(conn=self.__conn).table(
+            '_migrations_').orderBy("id DESC").limit(steps).get()
 
         dir_module = str(dir_migrations).replace("\\", ".")
 
@@ -427,7 +437,7 @@ class Migration:
             if result == False:
                 print(result)
                 return False
-
+            print(f"{file} {self.color('yellow')}[Rollbacking]{self.color()}")
             self.delete_migration_executed(migration['id'])
 
         return True
