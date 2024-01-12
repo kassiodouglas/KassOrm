@@ -11,6 +11,7 @@ Gerenciamento de migrations, modelos, seeders e gerador de query
 -   [Criar e executar](#criar-e-executar)
 -   [Configurando uma migration](#configurando-uma-migration)
 -   [Lista de tipos de campos e outras ferramentas](#lista-de-tipos-de-campos-e-outras-ferramentas)
+-   [Relacionamentos](#relacionamentos)
 
 [Querier](#querier)
 -   [Select](#select)
@@ -113,7 +114,9 @@ enum(name, values)
 integer(name,qnt)
 datetime(name)
 
+
 # propriedades para as colunas
+foreign(table, key, local_key)
 nullable()
 unsigned()
 comment(comment)
@@ -125,6 +128,47 @@ dropColumn(name)
 after(column)
 first(column)
 dropTableIfExists()
+```
+
+
+### Relacionamentos
+Para relacionar duas tabelas, use foreign() como abaixo:
+```
+from KassOrm import Migration
+
+class adresses(Migration): 
+  
+    __type__ = 'create'  
+    __table__ = 'adress'
+    __comment__ = 'contem endereços'
+
+    def up(self):
+        self.id().add()
+        self.string('name').add()
+        self.string('number).add()
+
+    def down(self): 
+        self.dropTableIfExists()    
+
+
+
+class migrate(Migration): 
+  
+    __type__ = 'create'  
+    __table__ = 'users'
+    __comment__ = 'criação da tabela de usuários'
+    
+    def up(self):
+        self.id().add()
+        self.datetime('created_at').add()     
+        self.unsignedBigInteger('adress_id').add()     
+
+        self.foreign(table="adress", key="id", local_key="adress_id").add()
+        
+        
+    def down(self): 
+        self.dropTableIfExists()        
+        
 ```
 
 
