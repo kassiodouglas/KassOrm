@@ -11,7 +11,7 @@ useSofdelete = importlib.import_module(config_location).useSofdelete
 
 class Querier:
 
-    def __init__(self, conn=None, softDelete=False) -> None:
+    def __init__(self, conn=None, softDelete=None) -> None:
 
         self.__conn = Conn(conn)
 
@@ -99,7 +99,6 @@ class Querier:
     # joins-------------------------------------------------------------
     # ...
 
-
     # condicional-------------------------------------------------------------
 
     def where(self, values: dict, conector: str = 'AND'):
@@ -183,6 +182,7 @@ class Querier:
 
     def limit(self, limit: int):
         self.__limit = limit
+        return self
 
     def offset(self, offset: int):
         self.__offset = offset
