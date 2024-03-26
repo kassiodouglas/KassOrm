@@ -1,458 +1,646 @@
 import json
+import os
 from .Conn import Conn
 from datetime import datetime
-import os
-import importlib
 
-config_location = os.getenv("CONFIG_PATH", "KassOrm.configs.database")
 
-useSofdelete = importlib.import_module(config_location).useSofdelete
+class Export:
+
+    def __init__(self) -> None:
+        pass
+
+    def toCsv(self):
+        return
+
+    def toTxt(self):
+        return
+
+    def toXlsx(self):
+        return
+
+    def toDataframe(self):
+        return
+
+    def toJson(self):
+        return
+
+
+class Utils:
+
+    def __init__(self) -> None:
+        pass
+
+    def beginTransaction(self):
+        return
+
+    def endTransaction(self):
+        return
+
+
+class Relationship:
+
+    def __init__(self) -> None:
+        pass
+
+    def innerJoin(self):
+        return self
+
+    def leftJoin(self):
+        return self
+
+    def join(self):
+        return self
 
 
 class Querier:
 
-    def __init__(self, conn=None, softDelete=None) -> None:
+    def __init__(self, conn: dict) -> None:
 
-        self.__conn = Conn(conn)
+        self.conn = Conn(conn=conn)
 
-        __useSoftDelete = useSofdelete['default'] if conn == None else useSofdelete[conn]
+        self.table_name = None
+        self.columns = []
+        self.wheres_cols = []
+        self.wheres_param = []
+        self.limit_number = None
+        self.offset_number = None
+        self.groupby = None
+        self.orderby = None
 
-        self.__softDelete = False if softDelete == None else softDelete if softDelete != False else __useSoftDelete
+    def selectRaw(self, query: str) -> list[dict]:
+        """
+        Executa uma consulta SQL bruta e retorna o resultado.
 
-        self.__withTrashed = False
+        Args:
+            query (str): A consulta SQL bruta.
 
-        self.__params = {}
+        Returns:
+            list[dict]: Uma lista de dicionários representando os resultados da consulta.
+        """
+        return self.conn.set_query(query=query).execute().fetch_all()
 
-        self.__columns = [{"name": "*"}]
+    def table(self, table: str) -> "Querier":
+        """
+        Define a tabela para a consulta.
 
-        self.__not_columns = []
+        Args:
+            table (str): O nome da tabela.
 
-        self.__table = None
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.table_name = table
+        return self
 
-        self.__table_alias = None
+    def select(self, cols: str | list[str] = "*") -> "Querier":
+        """
+        Especifica colunas a serem selecionadas na consulta.
 
-        self.__limit = None
+        Args:
+            cols (str | list[str]): Colunas a serem selecionadas. Pode ser uma string única ou uma lista de strings.
 
-        self.__offset = None
-
-        self.__group = None
-
-        self.__order = None
-
-        self.__conditional = []
-
-        self.__SQL = ""
-
-        self.__values_update = None
-
-        self.__last_method = 'select'
-
-        self.__join = []
-
-        self.__queries = []
-
-    # raw---------------------------------------------------------------
-    def raw(self, query: str, params: dict = {}, all: bool = True):
-        result = self.__conn.getQuery(query, params).execute(all)
-        data = json.dumps(result, default=self.__convert_datetime_to_string)
-        return data
-
-    # select-------------------------------------------------------------
-
-    def select(self, columns: list[str | dict]):
-        """Informar quais colunas buscar"""
-
-        self.__columns = []
-
-        for col in columns:
-
-            if type(col) == dict:
-                self.__columns.append(col)
-            else:
-                self.__columns.append({"name": col})
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        if type(cols) == list:
+            for col in cols:
+                self.columns.append(col)
+        else:
+            self.columns.append(cols)
 
         return self
 
-    def notSelect(self, columns: list[str]):
-        self.__not_columns = []
+    def notSelect(self, cols: str | list[str]) -> "Querier":
+        """
+        Exclui colunas especificadas da consulta.
 
-        for col in columns:
-            self.__not_columns.append(col)
+        Args:
+            cols (str | list[str]): Colunas a serem excluídas da seleção.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        return self
+
+    def __where(self, conditional: list[dict] | dict, operator: str):
+
+        if type(conditional) == dict:
+            conditional = [conditional]
+
+        for item in conditional:
+
+            if isinstance(item, dict):
+                idx = len(self.wheres_cols)
+                col = list(item.keys())[0]
+                key_param = f"{col}_{idx}"
+
+                operator = operator if idx > 0 else ""
+                query = f" {operator} {col} = %({key_param})s"
+
+                self.wheres_cols.append(query)
+                self.wheres_param.append({key_param: item[col]})
+
+            elif isinstance(item, str):
+                operator = item
+                continue
+
+    def where(self, conditional: list[dict] | dict) -> "Querier":
+        """
+        Adiciona cláusulas WHERE à consulta.
+
+        Args:
+            conditional (list[dict] | dict): Condição da cláusula WHERE. Pode ser um dicionário ou uma lista de dicionários.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__where(conditional, "AND")
+        return self
+
+    def orWhere(self, conditional: list[dict] | dict) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE à consulta.
+
+        Args:
+            conditional (list[dict] | dict): Condição da cláusula WHERE. Pode ser um dicionário ou uma lista de dicionários.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__where(conditional, "OR")
+        return self
+
+    def __whereIn(self, column: str, values: list[str], operator: str, notin=False):
+        id = len(self.wheres_cols)
+        notin = " NOT IN" if notin else "IN"
+
+        operator = operator if id > 0 else ""
+
+        bind_values = []
+        for value in values:
+            id_param = len(self.wheres_param)
+            key_param = f"{column}_{id}{id_param}"
+            bind_values.append(f"%({key_param})s")
+
+            self.wheres_param.append({key_param: value})
+
+        join_values = ", ".join(bind_values)
+        query = f"{operator} {column} {notin} ({join_values})"
+        self.wheres_cols.append(query)
+
+    def whereIn(self, column: str, values: list[str]) -> "Querier":
+        """
+        Adiciona cláusulas WHERE IN à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            values (list[str]): Lista de valores para a cláusula IN.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIn(column, values, "AND", False)
+        return self
+
+    def orWhereIn(self, column: str, values: list[str]) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE IN à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            values (list[str]): Lista de valores para a cláusula IN.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIn(column, values, "OR", False)
+        return self
+
+    def whereNotIn(self, column: str, values: list[str]) -> "Querier":
+        """
+        Adiciona cláusulas WHERE NOT IN à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            values (list[str]): Lista de valores para a cláusula NOT IN.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIn(column, values, "AND", True)
+        return self
+
+    def orWhereNotIn(self, column: str, values: list[str]) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE NOT IN à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            values (list[str]): Lista de valores para a cláusula NOT IN.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIn(column, values, "OR", True)
+        return self
+
+    def __whereIsNull(self, column: str, operator: str, notnull: bool = False):
+        idx = len(self.wheres_cols)
+        notnull = "IS NULL" if notnull == False else "IS NOT NULL"
+        op = operator if idx > 0 else ""
+        query = f" {op} {column} {notnull}"
+        self.wheres_cols.append(query)
+
+    def whereIsNull(self, column: str) -> "Querier":
+        """
+        Adiciona cláusulas WHERE IS NULL à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIsNull(column, "AND", False)
+        return self
+
+    def orWhereIsNull(self, column: str) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE IS NULL à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIsNull(column, "OR", False)
+        return self
+
+    def whereIsNotNull(self, column: str) -> "Querier":
+        """
+        Adiciona cláusulas WHERE IS NOT NULL à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIsNull(column, "AND", True)
+        return self
+
+    def orWhereIsNotNull(self, column: str) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE IS NOT NULL à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereIsNull(column, "AND", True)
+        return self
+
+    def __whereLike(self, column: str, value: str, operator: str):
+        idx = len(self.wheres_cols)
+        key_param = f"{column}_{idx}"
+
+        op = operator if idx > 0 else ""
+        query = f" {op} {column} LIKE %({key_param})s"
+
+        self.wheres_cols.append(query)
+        self.wheres_param.append({key_param: value})
+
+    def whereLike(self, column: str, value: str) -> "Querier":
+        """
+        Adiciona cláusulas WHERE LIKE à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            value (str): Valor para a cláusula LIKE.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereLike(column, value, "AND")
+        return self
+
+    def orWhereLike(self, column: str, value: str) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE LIKE à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            value (str): Valor para a cláusula LIKE.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereLike(column, value, "OR")
+        return self
+
+    def __whereBetween(self, column: str, dat1: str, dat2: str, operator: str):
+        idx = len(self.wheres_cols)
+        idparam = len(self.wheres_param)
+
+        key_param1 = f"{column}_{idx}{idparam}"
+        self.wheres_param.append({key_param1: dat1})
+
+        key_param2 = f"{column}_{idx}{idparam+1}"
+        self.wheres_param.append({key_param2: dat2})
+
+        op = operator if idx > 0 else ""
+        query = f" {op} {column} BETWEEN %({key_param1})s AND %({key_param2})s"
+
+        self.wheres_cols.append(query)
+
+    def whereBetween(self, column: str, dat1: str, dat2: str) -> "Querier":
+        """
+        Adiciona cláusulas WHERE BETWEEN à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            dat1 (str): Valor inicial para a cláusula BETWEEN.
+            dat2 (str): Valor final para a cláusula BETWEEN.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereBetween(column, dat1, dat2, "AND")
+        return self
+
+    def orWhereBetween(self, column: str, dat1: str, dat2: str) -> "Querier":
+        """
+        Adiciona cláusulas OR WHERE BETWEEN à consulta.
+
+        Args:
+            column (str): Nome da coluna.
+            dat1 (str): Valor inicial para a cláusula BETWEEN.
+            dat2 (str): Valor final para a cláusula BETWEEN.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.__whereBetween(column, dat1, dat2, "OR")
+        return self
+
+    def exists(self):
+        """
+        Verifica se existem registros nas condições especificadas.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
 
         return self
 
-    def table(self, table: str, alias: str = None):
-        """Informa a table e seu alias se houver"""
+    def limit(self, limit: int) -> "Querier":
+        """
+        Define o valor LIMIT para a consulta.
 
-        self.__table = table
+        Args:
+            limit (int): Valor LIMIT.
 
-        self.__table_alias = alias
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        if isinstance(limit, int):
+            idx = len(self.wheres_cols)
+            key_param = f"limit_{limit}_{idx}"
+            self.wheres_param.append({key_param: limit})
 
-        # self.__columns = self.__getColumnsNames(self.__table, alias)
+            self.limit_number = f"%({key_param})s"
+            return self
+        else:
+            raise Exception(f"Limit '{limit}' is not int")
 
-        return self
+    def offset(self, offset: int) -> "Querier":
+        """
+        Define o valor OFFSET para a consulta.
 
-    def withTrashed(self):
-        self.__withTrashed = True
-        return self
+        Args:
+            offset (int): Valor OFFSET.
 
-    # joins-------------------------------------------------------------
-    # ...
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        if isinstance(offset, int):
+            idx = len(self.wheres_cols)
+            key_param = f"offset_{offset}_{idx}"
+            self.wheres_param.append({key_param: offset})
 
-    # condicional-------------------------------------------------------------
-
-    def where(self, values: dict, conector: str = 'AND'):
-
-        where = ""
-
-        for col, value in values.items():
-            keyParamValue, keyParam = self.__paramKey(col)
-            self.__params[keyParamValue] = value
-
-            where += f" {col} = {keyParam} AND "
-
-        where = where[:-4]
-
-        self.__conditional.append({"where": where, "conector": conector})
-        return self
-
-    def whereIn(self, column: str, values: list[str], conector: str = "AND", type: str = ''):
-
-        where = f"{column} {type} IN "
-
-        vals = ''
-        for index, val in enumerate(values):
-            keyParamValue, keyParam = self.__paramKey(f"{column}in{index}")
-            self.__params[keyParamValue] = val
-
-            vals += f"'{keyParam}', "
-
-        where += f"({vals[:-2]})"
-
-        self.__conditional.append({"where": where, "conector": conector})
-        return self
-
-    def whereNotIn(self, column: str, values: list[str], conector='AND'):
-
-        return self.whereIn(column=column, values=values, type="NOT", conector=conector)
-
-    def orWhere(self, values: dict):
-
-        return self.where(values, "OR")
-
-    def orWhereIn(self, column: str, values: list[str]):
-
-        return self.whereIn(column, values, "OR")
-
-    def whereIsNull(self, column, conector: str = 'AND', type: str = ""):
-
-        where = f" {column} IS {type} NULL "
-        self.__conditional.append({"where": where, "conector": conector})
-        return self
-
-    def whereIsNotNull(self, col, conector: str = 'AND'):
-
-        return self.whereIsNull(col, conector, type="NOT")
-
-    def whereLike(self, col: str, value: str, conector: str = "AND"):
-
-        keyParamValue, keyParam = self.__paramKey(f"like{col}")
-        self.__params[keyParamValue] = value
-
-        where = f" {col} LIKE {keyParam} "
-
-        self.__conditional.append({"where": where, "conector": conector})
-        return self
-
-    def whereBetween(self, col: str, date1: str, date2: str, conector: str = "AND"):
-
-        keyParamValue, keyParam1 = self.__paramKey(f"like{col}")
-        self.__params[keyParamValue] = date1
-
-        keyParamValue, keyParam2 = self.__paramKey(f"like{col}")
-        self.__params[keyParamValue] = date2
-
-        where = f" {col} BETWEEN {keyParam1} AND {keyParam2} "
-
-        self.__conditional.append({"where": where, "conector": conector})
-
-        return self
-
-    # pos condicional   -------------------------------------------------------------
-
-    def limit(self, limit: int):
-        self.__limit = limit
-        return self
-
-    def offset(self, offset: int):
-        self.__offset = offset
-        return self
-
-    def groupBy(self, group: str | list[str]):
-
-        if type(group) == str:
-            grouped = group
+            self.offset_number = f"%({key_param})s"
+            return self
 
         else:
-            grouped = ""
-            for gr in group:
-                grouped += f"{gr}, "
-            grouped = grouped[:-2]
+            raise Exception(f"Offset '{offset}' is not int")
 
-        self.__group = grouped
+    def groupBy(self, value: str | list[str]) -> "Querier":
+        """
+        Define o valor GROUP BY para a consulta.
 
+        Args:
+            value (str | list[str]): Coluna ou colunas para agrupamento.
+
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.groupby = value if type(value) == str else ", ".join(value)
         return self
 
-    def orderBy(self, order: str | list[str]):
+    def orderBy(self, value: str | list[str]) -> "Querier":
+        """
+        Define o valor ORDER BY para a consulta.
 
-        if type(order) == str:
-            ordered = order
+        Args:
+            value (str | list[str]): Coluna ou colunas para ordenação.
 
-        else:
-            ordered = ""
-            for col, dir in order.items():
-                ordered += f"{col} {dir}, "
-            ordered = ordered[:-2]
-
-        self.__order = ordered
-
+        Returns:
+            Querier: A instância atual da classe.
+        """
+        self.orderby = value if type(value) == str else ", ".join(value)
         return self
 
-    # insert update delete-------------------------------------------------------------
-    def insert(self, data: dict | list[dict]):
+    def __get_data(self):
 
-        self.__construct_insert_query(data)
+        if self.table_name is None:
+            raise Exception("Table not configured")
 
-        query = self.__conn.getQuery(self.__SQL, data)
+        if self.columns == []:
+            self.columns = ["*"]
+            # raise Exception("Columns not configured")
 
-        type_insert = False if type(data) == dict else True
+        params_list = []
+        query = f"SELECT {', '.join(self.columns)} FROM {self.table_name}"
 
-        return query.execute_insert(type_insert)
+        for param_dict in self.wheres_param:
+            params_list.append(param_dict)
 
-    def update(self, data: dict):
+        if self.wheres_cols:
+            query += " WHERE"
+            for query_where in self.wheres_cols:
+                query += query_where
 
-        self.__construct_update_query(data)
-        return self.__conn.getQuery(self.__SQL,  self.__params).execute_update()
+        if self.groupby:
+            query += f" GROUP BY {self.groupby}"
 
-    def delete(self):
+        if self.orderby:
+            query += f" ORDER BY {self.orderby}"
 
-        if self.__softDelete == False:
-            self.__construct_delete_query()
-            return self.__conn.getQuery(self.__SQL,  self.__params).execute_delete()
+        if self.limit_number:
+            query += f" LIMIT {self.limit_number}"
+
+        if self.offset_number:
+            query += f" OFFSET {self.offset_number}"
+
+        params = dict(item for param_dict in params_list for item in param_dict.items())
+        return query, params
+
+    def get(self) -> list[dict]:
+        """
+        Executa a consulta SELECT e retorna todos os resultados.
+
+        Returns:
+            list[dict]: Uma lista de dicionários representando os resultados da consulta.
+        """
+        query, params = self.__get_data()
+        return self.conn.set_query(query=query, params=params).execute().fetch_all()
+
+    def first(self) -> dict | None:
+        """
+        Executa a consulta SELECT e retorna o primeiro resultado.
+
+        Returns:
+            dict | None: Um dicionário representando o primeiro resultado da consulta ou None se não houver resultados.
+        """
+
+        query, params = self.__get_data()
+        return self.conn.set_query(query=query, params=params).execute().fetch_one()
+
+    def insert(self, values: dict | list[dict]) -> list[int]:
+        """
+        Executa a consulta INSERT com os valores especificados.
+
+        Args:
+            values (dict | list[dict]): Valores a serem inseridos. Pode ser um dicionário ou uma lista de dicionários.
+
+        Returns:
+            list[int]: Uma lista de IDs gerados no processo de inserção.
+        """
+        many = True
+        if isinstance(values, dict):
+            values = [values]
+            many = False
+
+        columns = list(values[0].keys())
+
+        placeholders = ", ".join(["%s" for _ in range(len(columns))])
+        query = f"INSERT INTO {self.table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+
+        data = []
+        for val in values:
+            if set(columns) != set(val.keys()):
+                raise ValueError("All records must have the same columns")
+            data.append(list(val.values()))
+
+        if not many:
+            data = data[0]
+
+        return self.conn.set_query(query, data).execute().insert(many)
+
+    def update(self, values: dict) -> bool:
+        """
+        Executa a consulta UPDATE com os valores especificados.
+
+        Args:
+            values (dict): Valores a serem atualizados.
+
+        Returns:
+            bool: True se a atualização for bem-sucedida, False caso contrário.
+        """
+        columns = list(values.keys())
+        placeholders = ", ".join([f"{column} = %({column})s" for column in columns])
+
+        params_list = [values]
+        query = f"UPDATE {self.table_name} SET {placeholders}"
+
+        if self.wheres_cols:
+            query += " WHERE"
+            for param_dict in self.wheres_param:
+                params_list.append(param_dict)
+
+            for query_where in self.wheres_cols:
+                query += query_where
+
+        params = dict(item for param_dict in params_list for item in param_dict.items())
+        return self.conn.set_query(query, params).execute().update()
+
+    def delete(self) -> bool:
+        """
+        Executa a consulta DELETE com base nas condições especificadas.
+
+        Returns:
+            bool: True se a exclusão for bem-sucedida, False caso contrário.
+        """
+        params_list = []
+        query = f"DELETE FROM {self.table_name}"
+
+        if self.wheres_cols:
+            query += " WHERE"
+            for param_dict in self.wheres_param:
+                params_list.append(param_dict)
+
+            for query_where in self.wheres_cols:
+                query += query_where
+
+        params = dict(item for param_dict in params_list for item in param_dict.items())
+        return self.conn.set_query(query, params).execute().delete()
+
+    def toSql(self, formated: bool = True) -> str | dict:
+        """
+        Obtém a consulta SQL gerada com ou sem formatação.
+
+        Args:
+            formated (bool): Indica se a consulta SQL deve ser formatada.
+
+        Returns:
+            str | dict: A consulta SQL gerada, com ou sem formatação, dependendo do valor do argumento formated.
+        """
+        query, params = self.__get_data()
+
+        if formated:
+            query = query.replace("%(", "'").replace(")s", "'")
+            for key in params.keys():
+                query = query.replace(key, str(params[key]))
+
+            return query
+
         else:
-            now = datetime.now()
-            self.__construct_update_query({self.__softDelete: now})
-            return self.__conn.getQuery(self.__SQL,  self.__params).execute_update()
 
-    def active(self):
-        if self.__withTrashed:
-            self.__construct_update_query({self.__softDelete: None})
-            return self.__conn.getQuery(self.__SQL,  self.__params).execute_update()
+            return {"query": query, "params": params}
 
-    # finalização-------------------------------------------------------------
+    def get_columns(self) -> list[dict]:
+        """
+        Obtém as colunas e seus tipos de dados para a tabela especificada.
 
-    def get(self):
+        Returns:
+            list[dict]: Uma lista de dicionários representando as colunas da tabela e seus tipos de dados.
+        """
+        database = self.conn.conn_pool._cnx_config["database"]
+        query = f"""
+            SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.columns 
+            WHERE TABLE_SCHEMA ='{database}' AND table_name = '{self.table_name}'
+        """
+        return self.conn.set_query(query=query).execute().fetch_all()
 
-        self.__construct_select_query()
+    def get_count_records(self) -> dict | None:
+        """
+        Obtém o total de registros na tabela.
 
-        result = self.__conn.getQuery(self.__SQL, self.__params).execute()
-        data = json.dumps(result, default=self.__convert_datetime_to_string)
-        data = json.loads(data)
-
-        if type(data) == list:
-            for row in data:
-                cols_to_remove = [
-                    col for col in row.keys() if col in self.__not_columns]
-
-                for col in cols_to_remove:
-                    if col in self.__not_columns:
-                        row.pop(col)
-
-        return data
-
-    def first(self):
-        self.__construct_select_query()
-
-        result = self.__conn.getQuery(self.__SQL, self.__params).execute(False)
-        data = json.dumps(result, default=self.__convert_datetime_to_string)
-        data = json.loads(data)
-
-        if type(data) == dict:
-            cols_to_remove = [
-                col for col in data.keys() if col in self.__not_columns]
-            for col in cols_to_remove:
-                if col in self.__not_columns:
-                    data.pop(col)
-
-        return data
-
-    def toSql(self):
-
-        if self.__last_method == 'select':
-            self.__construct_select_query()
-
-        return self.__SQL
-
-    def toInfo(self):
-        if self.__last_method == 'select':
-            self.__construct_select_query()
-
-        return {'conn': self.__conn, 'type': self.__last_method, 'queries': self.__queries, 'params': self.__params}
-
-    def toParams(self):
-        return self.__params
-
-    # misc-------------------------------------------------------------
-
-    def __construct_select_query(self):
-
-        sql = "SELECT "
-
-        # colunas
-        tableColAlias = "" if self.__table_alias == None else self.__table_alias + "."
-
-        columns = ""
-        for col in self.__columns:
-
-            if col['name'] not in self.__not_columns:
-                colAlias = ''
-                if 'alias' in col:
-                    if col['alias'] != '':
-                        colAlias = f" AS {col['alias']}"
-
-                columns += f"{tableColAlias}{col['name']}{colAlias}, "
-        columns = columns[:-2]
-        if columns != "":
-            sql += columns.strip() + " "
-
-        # alias
-        tableAlias = "" if self.__table_alias == None else self.__table_alias
-        if columns != "":
-            sql += " FROM " + self.__table + " "
-        else:
-            sql += f" FROM {self.__table} {tableAlias}" + " "
-
-        # condicional
-        if self.__softDelete != False:
-            if self.__withTrashed == False:
-                self.whereIsNull(self.__softDelete)
-
-        where = ""
-        for wheres in self.__conditional:
-            queryWhere = wheres['where']
-            where += f" {wheres['conector']} ({queryWhere})"
-        if where != '':
-            where = f" WHERE {where} "
-        where = where.replace("WHERE  AND", "WHERE").replace(
-            "WHERE  OR", "WHERE")
-        where = where.strip()
-        if where != "":
-            sql += where + " "
-
-        # group
-        groupby = "" if self.__group == None else f" GROUP BY {self.__group}"
-        groupby = groupby.strip()
-        if groupby != "":
-            sql += groupby + " "
-
-        orderby = "" if self.__order == None else f" ORDER BY {self.__order}"
-        orderby = orderby.strip()
-        if orderby != "":
-            sql += orderby + " "
-
-        # limit and offset
-        limit = f" LIMIT {self.__limit}" if self.__limit != None else ""
-        limit = limit.strip()
-        if limit != "":
-            sql += limit + " "
-
-        offset = f" OFFSET {self.__offset}" if self.__offset != None else ""
-        offset = offset.strip()
-        if offset != "":
-            sql += offset + " "
-
-        self.__SQL = sql.strip()
-
-        self.__queries.append(sql)
-
-    def __construct_insert_query(self, data):
-        self.__last_method = 'insert'
-
-        data = [data] if type(data) == dict else data
-
-        for row in data:
-            cols = ""
-            values = ""
-            for col, value in row.items():
-                keyParamValue, keyParam = self.__paramKey(col, True)
-
-                cols += f"{col}, "
-                values += f"{keyParam}, "
-
-        cols = cols[:-2]
-        values = values[:-2]
-
-        self.__SQL = f"INSERT INTO {self.__table} ({cols}) VALUES ({values})"
-
-    def __construct_update_query(self, data):
-
-        self.__last_method = 'update'
-
-        values = ""
-        for key, value in data.items():
-            keyParamValue, keyparam = self.__paramKey(key)
-            self.__params[keyParamValue] = value
-
-            values += f"{key} = {keyparam}, "
-
-        values = values[:-2]
-        self.__values_update = values
-
-        # condicional
-        where = ""
-        for wheres in self.__conditional:
-            queryWhere = wheres['where']
-            where += f" {wheres['conector']} ({queryWhere})"
-        if where != '':
-            where = f" WHERE {where} "
-        where = where.replace("WHERE  AND", "WHERE").replace(
-            "WHERE  OR", "WHERE")
-
-        self.__SQL = f"UPDATE {self.__table} SET {self.__values_update} {where}"
-
-    def __construct_delete_query(self):
-
-        self.__last_method = 'delete'
-
-        # condicional
-        where = ""
-        for wheres in self.__conditional:
-            queryWhere = wheres['where']
-            where += f" {wheres['conector']} ({queryWhere})"
-        if where != '':
-            where = f" WHERE {where} "
-        where = where.replace("WHERE  AND", "WHERE").replace(
-            "WHERE  OR", "WHERE")
-
-        self.__SQL = f"DELETE FROM {self.__table} {where}"
-
-    def __lenParams(self):
-        return len(self.__params)
-
-    def __paramKey(self, key, insert=False):
-        pIndex = self.__lenParams()
-
-        if insert == False:
-            keyparam = f"{self.__table}_{key}_{pIndex}".replace('.', "_")
-        else:
-            keyparam = key
-
-        return f"{keyparam}", f"%({keyparam})s"
-
-    def upColumns(self, data):
-        self.__columns = self.__columns + (data)
-
-    def __convert_datetime_to_string(self, obj):
-        if isinstance(obj, datetime):
-            return obj.strftime("%Y-%m-%d %H:%M:%S")
-        raise TypeError("Tipo de objeto não serializável")
+        Returns:
+            dict | None: Um dicionário contendo o total de registros na tabela ou None se houver um erro.
+        """
+        query = f"SELECT COUNT(*) AS total FROM {self.table_name}"
+        return self.conn.set_query(query=query).execute().fetch_one()

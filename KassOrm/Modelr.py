@@ -1,386 +1,437 @@
-from .Querier import Querier
 import json
-from pathlib import Path
-import os
-from KassOrm._helpers import getStub
+from datetime import date
+from datetime import datetime as dt
+from .Querier import Querier
 
 
-class Modelr():
+class HasMany:
 
-    __sofDelete__ = False
-    __table__ = None
+    def run(self, rows: list, conn: dict, __has: dict):
+        ids = []
+        for row in rows:
+            ids.append(str(row[__has["local_key"]]))
+        ids = ", ".join(ids)
+
+        related_rows = Querier(conn=conn).selectRaw(
+            f"""
+            SELECT 
+                MODEL.* , 
+                PIVOT.{__has['pivot_local_key']} AS pivot_{__has['pivot_local_key']},
+                PIVOT.{__has['pivot_model_key']} AS pivot_{__has['pivot_model_key']}
+            FROM {__has['model'].__table__} MODEL 
+            INNER JOIN {__has['pivot_table']} PIVOT ON 
+                MODEL.{__has['model_key']} = PIVOT.{__has['pivot_model_key']} 
+            WHERE PIVOT.{__has['pivot_local_key']} in ({ids})"""
+        )
+
+        for row in rows:
+            row[__has["related_name"]] = []
+            for row2 in related_rows:
+                if row[__has["local_key"]] == row2[f"pivot_{__has['pivot_local_key']}"]:
+                    row[__has["related_name"]].append(row2)
+
+        return rows
+
+
+class HasOne:
+    def run(self, rows: list, conn: dict, __has: dict):
+        ids = []
+        for row in rows:
+            ids.append(str(row[__has["local_key"]]))
+        ids = ", ".join(ids)
+
+        related_rows = Querier(conn=conn).selectRaw(
+            f"""
+            SELECT * FROM {__has['model'].__table__} WHERE 
+            """
+        )
+
+        for row in rows:
+            row[__has["related_name"]] = {}
+            for row2 in related_rows:
+                if row[__has["local_key"]] == row2[f"pivot_{__has['pivot_local_key']}"]:
+                    row[__has["related_name"]] = row2
+
+        return rows
+
+
+class Modelr:
+
     __conn__ = None
+    __table__ = None
+    __softdelete__ = None
 
     def __init__(self) -> None:
+        self.querier = Querier(conn=self.__conn__).table(self.__table__)
+        self.withtrashed = False
 
-        self.query = Querier(
-            conn=self.__conn__, softDelete=self.__sofDelete__).table(self.__table__)
-
-        self.__has = []
-
-        self.__queries = []
-
-    # get data -----------------------------------------------------------
-
-    def first(self):
-        return self.execute('first')
-
-    def get(self):
-        return self.execute('get')
-
-    def execute(self, type: str):
-
-        if type == 'get':
-            data = self.query.get()
-            data = self.check_relationships(data)
-
-        elif type == 'first':
-            data = self.query.first()
-            data = self.check_relationships(data, True)
-
-        elif type == 'onlysql':
-            self.__queries.insert(
-                0, {"query": self.query.toSql(), "params": self.query.toParams()})
-            data = self.query.get()
-
-            if data != None:
-                self.check_relationships(data, False, True)
-            return
-
-        return data
-
-    # get info -----------------------------------------------------------
-
-    def toSql(self):
-        query = self.query.toSql()
-
-        for key, value in self.query.toParams().items():
-            query = query.replace(f"%({key})s", str(value))
-
-        return query
-
-    def toSqls(self):
-        return self.getInfo(True)
-
-    def toInfo(self):
-        return {"query": self.query.toSql(), "params": self.query.toParams()}
-
-    def toInfos(self):
-        return self.getInfo()
-
-    def getInfo(self, binded=False):
-        self.execute('onlysql')
-
-        if binded:
-            queries = []
-            for x in self.__queries:
-                query = x['query']
-                for key, value in x['params'].items():
-                    query = query.replace(f"%({key})s", str(value))
-
-                queries.append(query)
-
-            return queries
-
-        else:
-            return self.__queries
-
-    # select ------------------------------------------------
-
-    def select(self, columns: list):
-        self.query.select(columns)
-        return self
-
-    def notSelect(self, columns: list):
-        self.query.notSelect(columns)
-        return self
-
-    # insert ---------------------------------------------------------
-
-    def insert(self, data: dict | list[dict]):
-        return self.query.insert(data)
-
-    # update -------------------------------
-
-    def update(self, data):
-        return self.query.update(data)
-
-    # delete ------------------------------------------------------------
-
-    def delete(self):
-        return self.query.delete()
-
-    def active(self):
-        return self.query.active()
+        self.__has = {}
 
     def withTrashed(self):
-        self.query.withTrashed()
+        self.withtrashed = True
         return self
 
-    # condicional-----------------------------------------------------------
+    def __with_trash(self):
+        if self.__softdelete__ is not None and self.withtrashed == False:
+            return True
+        else:
+            return False
 
-    def where(self, values: dict, conector: str = 'AND'):
-        self.query.where(values, conector)
+    def select(self, cols: str | list[str] = "*"):
+        self.querier.select(cols)
         return self
 
-    def whereIn(self, column: str, values: list, conector: str = 'AND', type: str = ''):
-        self.query.whereIn(column, values, conector, type)
+    def where(self, conditional: list[dict] | dict):
+        self.querier.where(conditional)
         return self
 
-    def whereNotIn(self, column: str, values: list, conector: str = 'AND'):
-        self.query.whereNotIn(column, values, conector)
+    def orWhere(self, conditional: list[dict] | dict):
+        self.querier.orWhere(conditional)
         return self
 
-    def orWhere(self, values: dict):
-        self.query.orWhere(values)
+    def whereIn(self, column: str, values: list[str]):
+        self.querier.whereIn(column, values)
         return self
 
-    def whereIsNull(self, column: str, conector: str = 'AND', type: str = ''):
-        self.query.whereIsNull(column, conector, type)
+    def orWhereIn(self, column: str, values: list[str]):
+        self.querier.orWhereIn(column, values)
         return self
 
-    def whereIsNotNull(self, column: str,  conector: str = 'AND'):
-        self.query.whereIsNotNull(column, conector)
+    def whereNotIn(self, column: str, values: list[str]):
+        self.querier.whereNotIn(column, values)
         return self
 
-    def whereLike(self, column: str, values: list, conector: str = 'AND'):
-        self.query.whereLike(column, values, conector)
+    def orWhereNotIn(self, column: str, values: list[str]):
+        self.querier.orWhereNotIn(column, values)
         return self
 
-    # pos condicional -----------------------------------
+    def whereIsNull(self, column: str):
+        self.querier.whereIsNull(column)
+        return self
+
+    def orWhereIsNull(self, column: str):
+        self.querier.orWhereIsNull(column)
+        return self
+
+    def whereIsNotNull(self, column: str):
+        self.querier.whereIsNotNull(column)
+        return self
+
+    def orWhereIsNotNull(self, column: str):
+        self.querier.orWhereIsNotNull(column)
+        return self
+
+    def whereLike(self, column: str, value: str):
+        self.querier.whereLike(column, value)
+        return self
+
+    def orWhereLike(self, column: str, value: str):
+        self.querier.orWhereLike(column, value)
+        return self
+
+    def whereBetween(self, column: str, dat1: str, dat2: str):
+        self.querier.whereBetween(column, dat1, dat2)
+        return self
+
+    def orWhereBetween(self, column: str, dat1: str, dat2: str):
+        self.querier.orWhereBetween(column, dat1, dat2)
+        return self
 
     def limit(self, limit: int):
-        self.query.limit(limit)
+        self.querier.limit(limit)
         return self
 
     def offset(self, offset: int):
-        self.query.offset(offset)
+        self.querier.offset(offset)
         return self
 
-    def groupBy(self, group: str | list[str]):
-        self.query.groupBy(group)
+    def groupBy(self, value: str | list[str]):
+        self.querier.groupBy(value)
         return self
 
-    def orderBy(self, order: str | list[str]):
-        self.query.orderBy(order)
+    def orderBy(self, value: str | list[str]):
+        self.querier.orderBy(value)
         return self
 
-    # relashionship -----------------------------------------------------------
+    def json_date_serializer(self, obj):
+        if isinstance(obj, date):
+            return obj.isoformat()
 
-    def has(self, model: str, model_key: str, intermediate_model_key: str = None, intermediate_table: str = None, intermediate_local_key: str = None, local_key: str = None, type: str = None):
-        table_local = self.__table__
-        table_model = model.__table__
+    def get(self):
+        if self.__with_trash():
+            self.querier.whereIsNull(self.__softdelete__)
 
-        for related in self.__has:
-            for a in related.values():
-                check = len(a)
-                if check == 0:
-                    key = list(related)[0]
-                    related[key] = {
-                        "type": type,
-                        "local_table": table_local,
-                        "local_key": local_key,
-                        "intermediate_table": intermediate_table,
-                        "model_table": table_model,
-                        "model_key": model_key,
-                        "intermediate_model_key": intermediate_model_key,
-                        "intermediate_table": intermediate_table,
-                        "intermediate_local_key": intermediate_local_key
-                    }
+        rows = self.querier.get()
 
-    def hasOne(self, model, model_key, local_key):
-        self.has(
-            model=model,
-            model_key=model_key,
-            local_key=local_key,
-            type='one'
-        )
+        if self.__has:
+            if self.__has["related_type"] == "HasMany":
+                rows = HasMany().run(rows, self.__conn__, self.__has)
+            elif self.__has["related_type"] == "HasOne":
+                rows = HasOne().run(rows, self.__conn__, self.__has)
 
-    def hasMany(self, model, model_key, local_key):
-        self.has(
-            model=model,
-            model_key=model_key,
-            local_key=local_key,
-            type='many'
-        )
+        return json.dumps(rows, default=self.json_date_serializer)
 
-    def hasManyToMany(self, model, model_key, intermediate_model_key, intermediate_table, intermediate_local_key, local_key):
-        self.has(
-            model=model,
-            model_key=model_key,
-            intermediate_model_key=intermediate_model_key,
-            intermediate_table=intermediate_table,
-            intermediate_local_key=intermediate_local_key,
-            local_key=local_key,
-            type='manytomany'
-        )
-        self.selected_related = model.__table__
-        return self
+    def first(self):
+        if self.__with_trash():
+            self.querier.whereIsNull(self.__softdelete__)
 
-    def withPivot(self, columns: list[str] | bool = True):
+        row = self.querier.first()
 
-        for related in self.__has:
-            for key in related.keys():
-                if self.selected_related == key:
-                    related[key]['pivot'] = columns
+        if self.__has:
+            if self.__has["related_type"] == "HasMany":
+                row = HasMany().run(row, self.__conn__, self.__has)
+            elif self.__has["related_type"] == "HasOne":
+                row = HasOne().run(row, self.__conn__, self.__has)
 
-    def related(self, model: list | str):
+        return json.dumps(row, default=self.json_date_serializer)
 
-        def x(d):
+    def toSql(self, formmated: bool = True):
+        return self.querier.toSql(formmated)
+
+    def delete(self):
+        if self.__with_trash():
+            return self.querier.update({self.__softdelete__: dt.now()})
+        return self.querier.delete()
+
+    def active(self):
+        if self.__with_trash():
+            return self.querier.update({self.__softdelete__: None})
+
+    def update(self, values: dict):
+        if self.__softdelete__ is not None:
+            self.querier.whereIsNull(self.__softdelete__)
+
+        return self.querier.update(values)
+
+    def insert(self, values: dict | list[dict]):
+        return self.querier.insert(values)
+
+    def withRelated(self, relateds: str | list[str]):
+
+        def getRelated(d):
             method = getattr(self, d)
-            self.__has.append({method.__name__: {}})
             method()
 
-        if type(model) == str:
-            x(model)
+        if type(relateds) == str:
+            getRelated(relateds)
+            self.__has["related_name"] = relateds
         else:
-            for i in model:
-                x(i)
+            for i in relateds:
+                getRelated(i)
 
         return self
 
-    def check_relationships(self, data, first=False, onlySql=False):
+    def hasMany(
+        self,
+        model: "Modelr",
+        model_key: str,
+        pivot_model_key: str,
+        pivot_table: str,
+        pivot_local_key: str,
+        local_key: str,
+    ):
+        self.__has["related_type"] = "HasMany"
 
-        data_json = data if type(data) == list else data
-        data_json = data_json if type(data_json) == list else [data_json]
+        self.__has["model"] = model
+        self.__has["model_key"] = model_key
+        self.__has["pivot_model_key"] = pivot_model_key
+        self.__has["pivot_table"] = pivot_table
+        self.__has["pivot_local_key"] = pivot_local_key
+        self.__has["local_key"] = local_key
 
-        for dictr in self.__has:
-            for rel, value in dictr.items():
-                if value['type'] in ['many', 'one']:
-                    data_json = self.check_relationships_one_many(
-                        rel, value, data_json, onlySql)
+    def hasOne(self, model: "Modelr", model_key: str, local_key: str):
+        self.__has["related_type"] = "HasOne"
 
-                elif value['type'] in ['manytomany']:
-                    data_json = self.check_relationships_manytomany(
-                        rel, value, data_json, onlySql)
+        self.__has["model"] = model
+        self.__has["model_key"] = model_key
+        self.__has["local_key"] = local_key
 
-        if onlySql == False:
-            return data_json[0] if first == True else data_json
 
-    def check_relationships_one_many(self, rel, value, data_json, onlySql):
+#     # relashionship -----------------------------------------------------------
 
-        all = True if value['type'] == 'many' else False
+#     def has(self, model: str, model_key: str, intermediate_model_key: str = None, intermediate_table: str = None, intermediate_local_key: str = None, local_key: str = None, type: str = None):
+#         table_local = self.__table__
+#         table_model = model.__table__
 
-        keys = list(set(row[value['local_key']] for row in data_json))
+#         for related in self.__has:
+#             for a in related.values():
+#                 check = len(a)
+#                 if check == 0:
+#                     key = list(related)[0]
+#                     related[key] = {
+#                         "type": type,
+#                         "local_table": table_local,
+#                         "local_key": local_key,
+#                         "intermediate_table": intermediate_table,
+#                         "model_table": table_model,
+#                         "model_key": model_key,
+#                         "intermediate_model_key": intermediate_model_key,
+#                         "intermediate_table": intermediate_table,
+#                         "intermediate_local_key": intermediate_local_key
+#                     }
 
-        query_related = Querier(self.__conn__).table(
-            value['model_table']).whereIn(value['model_key'], keys)
-        self.__queries.append(
-            {"query": query_related.toSql(), "params": query_related.toParams()})
+#     def hasOne(self, model, model_key, local_key):
+#         self.has(
+#             model=model,
+#             model_key=model_key,
+#             local_key=local_key,
+#             type='one'
+#         )
 
-        if onlySql == False:
-            data_rel = query_related.get()
-            if all:
-                for row in data_json:
-                    row[rel] = None
-                    for relrow in data_rel:
-                        if row[value['local_key']] == relrow[value['model_key']]:
-                            if row[rel] == None:
-                                row[rel] = []
-                            row[rel].append(relrow)
+#     def hasMany(self, model, model_key, local_key):
+#         self.has(
+#             model=model,
+#             model_key=model_key,
+#             local_key=local_key,
+#             type='many'
+#         )
 
-            else:
-                for row in data_json:
-                    for relrow in data_rel:
-                        if row[value['local_key']] == relrow[value['model_key']]:
-                            if rel not in row.keys():
-                                row[rel] = relrow
-                            else:
-                                row[rel] == None
+#     def hasManyToMany(self, model, model_key, intermediate_model_key, intermediate_table, intermediate_local_key, local_key):
+#         self.has(
+#             model=model,
+#             model_key=model_key,
+#             intermediate_model_key=intermediate_model_key,
+#             intermediate_table=intermediate_table,
+#             intermediate_local_key=intermediate_local_key,
+#             local_key=local_key,
+#             type='manytomany'
+#         )
+#         self.selected_related = model.__table__
+#         return self
 
-        return data_json
+#     def withPivot(self, columns: list[str] | bool = True):
 
-    def check_relationships_manytomany(self, rel, value, data_json, onlySql):
-        local_keys = list(set(row[value['local_key']] for row in data_json))
+#         for related in self.__has:
+#             for key in related.keys():
+#                 if self.selected_related == key:
+#                     related[key]['pivot'] = columns
 
-        # acessar intermediaria
-        query_intermediated = Querier(self.__conn__).table(
-            value['intermediate_table']).whereIn(value['intermediate_local_key'], local_keys)
-        self.__queries.append(
-            {"query": query_intermediated.toSql(), "params": query_intermediated.toParams()})
+#     def related(self, model: list | str):
 
-        # resgatar ids do modelo relacionado
-        data_intermediate_json = query_intermediated.get()
-        # data_intermediate_json = json.loads(data_intermediate_json)
-        data_intermediate_json = data_intermediate_json if type(
-            data_intermediate_json) == list else [data_intermediate_json]
-        intemediate_model_keys = list(
-            set(row[value['intermediate_model_key']] for row in data_intermediate_json))
+#         def x(d):
+#             method = getattr(self, d)
+#             self.__has.append({method.__name__: {}})
+#             method()
 
-        if intemediate_model_keys != []:
-            # acessar table do model
-            query_model = Querier(self.__conn__).table(value['model_table']).whereIn(
-                value['model_key'], intemediate_model_keys)
-            self.__queries.append(
-                {"query": query_model.toSql(), "params": query_model.toParams()})
-            data_rel = query_model.get()
-        else:
-            data_rel = []
+#         if type(model) == str:
+#             x(model)
+#         else:
+#             for i in model:
+#                 x(i)
 
-        # mesclando relacionamentos
-        # data_rel = json.loads(query_model.get())
-        local_counter = 0
-        for local_row in data_json:
-            local_counter += 1
+#         return self
 
-            if rel not in local_row:
-                local_row[rel] = None
+#     def check_relationships(self, data, first=False, onlySql=False):
 
-            inter_counter = 0
-            for interdata_row in data_intermediate_json:
-                inter_counter += 1
+#         data_json = data if type(data) == list else data
+#         data_json = data_json if type(data_json) == list else [data_json]
 
-                # if rel not in local_row:
-                #     local_row[rel] = None
+#         for dictr in self.__has:
+#             for rel, value in dictr.items():
+#                 if value['type'] in ['many', 'one']:
+#                     data_json = self.check_relationships_one_many(
+#                         rel, value, data_json, onlySql)
 
-                model_counter = 0
-                for model_row in data_rel:
-                    model_counter += 1
+#                 elif value['type'] in ['manytomany']:
+#                     data_json = self.check_relationships_manytomany(
+#                         rel, value, data_json, onlySql)
 
-                    if local_row[value['local_key']] == interdata_row[value['intermediate_local_key']] and\
-                       model_row[value['model_key']] == interdata_row[value['intermediate_model_key']]:
+#         if onlySql == False:
+#             return data_json[0] if first == True else data_json
 
-                        if "pivot" in value:
-                            if type(value['pivot']) == list:
-                                model_row['pivot'] = {col: interdata_row[col] for col in interdata_row if col in value['pivot']
-                                                      and interdata_row[value['intermediate_model_key']] == model_row[value['model_key']]}
-                            else:
-                                model_row['pivot'] = interdata_row
+#     def check_relationships_one_many(self, rel, value, data_json, onlySql):
 
-                        if local_row[rel] == None:
-                            local_row[rel] = []
+#         all = True if value['type'] == 'many' else False
 
-                        local_row[rel].append(model_row)
+#         keys = list(set(row[value['local_key']] for row in data_json))
 
-        return data_json
+#         query_related = Querier(self.__conn__).table(
+#             value['model_table']).whereIn(value['model_key'], keys)
+#         self.__queries.append(
+#             {"query": query_related.toSql(), "params": query_related.toParams()})
 
-    def make_file_model(self, dir_models, table, comment: str = ""):
-        """Responsável por criar os arquivos de modelos"""
-        # table = table.
+#         if onlySql == False:
+#             data_rel = query_related.get()
+#             if all:
+#                 for row in data_json:
+#                     row[rel] = None
+#                     for relrow in data_rel:
+#                         if row[value['local_key']] == relrow[value['model_key']]:
+#                             if row[rel] == None:
+#                                 row[rel] = []
+#                             row[rel].append(relrow)
 
-        dir_models = Path(dir_models)
-        # modelname = table.replace("_"," ").capitalize().replace(" ","")
+#             else:
+#                 for row in data_json:
+#                     for relrow in data_rel:
+#                         if row[value['local_key']] == relrow[value['model_key']]:
+#                             if rel not in row.keys():
+#                                 row[rel] = relrow
+#                             else:
+#                                 row[rel] == None
 
-        parts = table.split('_')
-        modelname = parts[0] + ''.join(x.title() for x in parts[1:])
-        modelname = modelname.capitalize()
-        filename = modelname + ".py"
+#         return data_json
 
-        if os.path.isdir(dir_models) == False:
-            os.makedirs(dir_models)
+#     def check_relationships_manytomany(self, rel, value, data_json, onlySql):
+#         local_keys = list(set(row[value['local_key']] for row in data_json))
 
-        if os.path.isfile(f"{dir_models}/{filename}") == True:
-            return f'{modelname} - Model already created'
+#         # acessar intermediaria
+#         query_intermediated = Querier(self.__conn__).table(
+#             value['intermediate_table']).whereIn(value['intermediate_local_key'], local_keys)
+#         self.__queries.append(
+#             {"query": query_intermediated.toSql(), "params": query_intermediated.toParams()})
 
-        content = getStub("model.stub")
+#         # resgatar ids do modelo relacionado
+#         data_intermediate_json = query_intermediated.get()
+#         # data_intermediate_json = json.loads(data_intermediate_json)
+#         data_intermediate_json = data_intermediate_json if type(
+#             data_intermediate_json) == list else [data_intermediate_json]
+#         intemediate_model_keys = list(
+#             set(row[value['intermediate_model_key']] for row in data_intermediate_json))
 
-        content = content.replace(
-            "%COMMENT%", f"'{comment.lower()}'" if comment != "" else "''")
-        content = content.replace("%TABLE%", table)
-        content = content.replace("%MODELNAME%", modelname)
+#         if intemediate_model_keys != []:
+#             # acessar table do model
+#             query_model = Querier(self.__conn__).table(value['model_table']).whereIn(
+#                 value['model_key'], intemediate_model_keys)
+#             self.__queries.append(
+#                 {"query": query_model.toSql(), "params": query_model.toParams()})
+#             data_rel = query_model.get()
+#         else:
+#             data_rel = []
 
-        file = open(f"{dir_models}/{filename}", "w+", encoding="utf-8")
-        file.writelines(content)
-        file.close()
+#         # mesclando relacionamentos
+#         # data_rel = json.loads(query_model.get())
+#         local_counter = 0
+#         for local_row in data_json:
+#             local_counter += 1
 
-        return True
+#             if rel not in local_row:
+#                 local_row[rel] = None
+
+#             inter_counter = 0
+#             for interdata_row in data_intermediate_json:
+#                 inter_counter += 1
+
+#                 # if rel not in local_row:
+#                 #     local_row[rel] = None
+
+#                 model_counter = 0
+#                 for model_row in data_rel:
+#                     model_counter += 1
+
+#                     if local_row[value['local_key']] == interdata_row[value['intermediate_local_key']] and\
+#                        model_row[value['model_key']] == interdata_row[value['intermediate_model_key']]:
+
+#                         if "pivot" in value:
+#                             if type(value['pivot']) == list:
+#                                 model_row['pivot'] = {col: interdata_row[col] for col in interdata_row if col in value['pivot']
+#                                                       and interdata_row[value['intermediate_model_key']] == model_row[value['model_key']]}
+#                             else:
+#                                 model_row['pivot'] = interdata_row
+
+#                         if local_row[rel] == None:
+#                             local_row[rel] = []
+
+#                         local_row[rel].append(model_row)
+
+#         return data_json

@@ -1,443 +1,593 @@
 import os
 import glob
 import importlib
+import logging
+import traceback
 from pathlib import Path
-from KassOrm._helpers import getStub
-from datetime import datetime as dt
-from KassOrm.Querier import Querier
 from KassOrm.Conn import Conn
+from rich.console import Console
 
 
-class Migration:
-    __file__ = None
-    __conn__ = None
-    __type__ = None
-    __table__ = None
-    __comment__ = None
-    __rollback__ = False
+class Properties:
 
-    def __init__(self, conn=None) -> None:
-        self.__sql = ""
-
-        self.__params = {}
-
-        self.__columns = []
-
-        self.__column = {}
-
-        self.__primary_key = None
-
-        self.__rollback = False
-
-        self.__add_column = []
-
-        self.__conn = conn if conn != None else self.__conn__
-
-    def make_file_migration(self, name_migration, dir_migrations, table, comment: str = ""):
-        """Responsável por criar os arquivos de migração"""
-        name_migration = name_migration.lower()
-
-        dir_migrations = Path(dir_migrations)
-
-        if os.path.isdir(dir_migrations) == False:
-            os.makedirs(dir_migrations)
-
-        if "create" in name_migration:
-            content = getStub("migration_create.stub")
-        else:
-            content = getStub("migration_alter.stub")
-
-        content = content.replace(
-            "%COMMENT%", f"'{comment.lower()}'" if comment != "" else "''"
-        )
-        content = content.replace("%TABLE%", table)
-
-        filename = dt.now().strftime("%Y_%m_%d__%H%M%S") + "_" + name_migration + ".py"
-        file = open(f"{dir_migrations}/{filename}", "w+", encoding="utf-8")
-        file.writelines(content)
-        file.close()
-
-    def generate_query_create(self):
-        """Gera uma query de criação de tabela"""
-        self.__sql = "CREATE TABLE IF NOT EXISTS {} (".format(self.__table__)
-
-        for col in self.__columns:
-            column = ""
-            for value in col.values():
-                column += f"{value} "
-
-            self.__sql += f"{column}, "
-
-        if self.__primary_key != None:
-            self.__sql += "PRIMARY KEY ({}), ".format(self.__primary_key)
-
-        self.__sql = self.__sql[:-2]
-        self.__sql += ");"
-
-    def generate_query_alter(self):
-        """Gera uma query de alteração de tabela"""
-
-        self.__sql = "ALTER TABLE {} ".format(self.__table__)
-
-        for col in self.__columns:
-            column = ""
-            for value in col.values():
-                column += f"{value} "
-
-            self.__sql += f"{column}, "
-
-        self.__sql = self.__sql[:-2]
-
-    def generate_query_rollback(self):
-        """Gera uma query de alteração, drop ou exclusão de tabela"""
-
-        pass
-
-    def generate_query(self):
-        """Gerencia qual query gerar"""
-
-        # up e down configura as colunas e o q for para gerar a query
-        if self.__rollback == False:
-            self.up()
-        else:
-            self.down()
-
-        # gera a query de acordo com as configs de up ou down
-        if self.__type__ == "create" and self.__rollback == False:
-            self.generate_query_create()
-
-        elif self.__type__ == "alter":
-            self.generate_query_alter()
-
-    def setRollback(self):
-        self.__rollback = True
-        return self
-
-    def execute(self):
-        """Principal método de execução da migration, gera o sql do arquivo migration e o executa"""
-        try:
-            self.generate_query()
-            result = Conn(self.__conn).getQuery(
-                self.__sql, self.__params).execute_create()
-            return result
-        except Exception as err:
-            print("\n Execute: " + str(err))
-            print("\nSQL: " + self.__sql)
-            return False
-
-    def execute_migrate(self, module_name: str):
-        """Executa o metodo execute da classe migrate do arquivo migration"""
-        module = importlib.import_module(module_name)
-        return module.migrate(), module.migrate().execute()
-
-    def execute_rollback(self, module_name: str):
-        module = importlib.import_module(module_name)
-        return module.migrate(), module.migrate().setRollback().execute()
-
-    def catch_module_and_migrations(self, dir_migrations):
-        """Retorna o nome do diretório como módulo e todas as migrações do diretorio"""
-        migrations = glob.glob(os.path.join(dir_migrations, "*.py"))
-        dir_module = str(dir_migrations).replace("\\", ".").replace("/", ".")
-        return dir_module, migrations
-
-    def has_migration_executed(self, migration: str):
-        """Verifica se a migração foi executada, salva na tabela _migrations_"""
-        try:
-            return Querier(conn=self.__conn).table("_migrations_").where({"migration": migration}).first()
-        except Exception as err:
-            print(str(err))
-            return False
-
-    def save_migration_executed(self, migration: str, description: str = None):
-        """Salva registro da migração executada na tabela _migrations_"""
-        try:
-            # sql = """INSERT INTO _migrations_ (date, migration, description) VALUES (NOW(), %(migration)s, %(description)s)"""
-            # Conn().getQuery(
-            #     sql, {"migration": migration, "description": description}
-            # ).execute_insert()
-
-            now = dt.now()
-            Querier(conn=self.__conn).table('_migrations_').insert(
-                {"date": now, "migration": migration, "description": description})
-            return True
-        except Exception as err:
-            print("save_migration_executed:" + str(err))
-            return False
-
-    def delete_migration_executed(self, id):
-
-        Querier(conn=self.__conn).table(
-            '_migrations_').where({"id": id}).delete()
-        return True
-
-    def execute_all_migrations(self, dir_migrations: str):
-        """Executa todas as migrações do diretorio informado"""
-
-        dir_module, migrations = self.catch_module_and_migrations(
-            dir_migrations)
-
-        step = 1
-        for migration in migrations:
-            file = os.path.basename(migration).replace(".py", "")
-
-            if self.has_migration_executed(file) == None:
-                module, result = self.execute_migrate(f"{dir_module}.{file}")
-
-                if result == True:
-                    self.save_migration_executed(file, module.__comment__)
-                    print(f"{file} {self.color('green')}[OK]{self.color()}")
-                else:
-                    print(f"{file} {self.color('red')}[Fail]{self.color()}")
-
-                    self.rollback(dir_migrations, step)
-                    return False
-
-            else:
-                print(
-                    f"{file} {self.color('yellow')}[ALREADY EXISTS]{self.color()}")
-
-            step += 1
-
-        return True
-
-    def drop_all_migrations(self, dir_migrations: str):
-
-        dir_module, migrations = self.catch_module_and_migrations(
-            dir_migrations)
-        migrations = migrations[::-1]
-
-        self.drop_table_migrations()
-
-        for migration in migrations:
-            file = os.path.basename(migration).replace(".py", "")
-
-            module, result = self.execute_rollback(f"{dir_module}.{file}")
-
-            print(f"{file} {self.color('yellow')} [DROPPED]" + self.color())
-
-        return True
-
-    # migration methods
-
-    def up(self):
-        return self
-
-    def down(self):
-        return self
-
-    #  colunas ------------------
-
-    def add(self):
-        self.__columns.append(self.__column)
-        self.__column = {}
-        return
+    def __init__(self) -> None:
+        self.columns = []
 
     def id(self):
-        self.__column["name"] = "id"
-        self.__column["type"] = "BIGINT"
-        self.__column["unsigned"] = "UNSIGNED"
-        self.__column["isNull"] = "NOT NULL"
-        self.__column["autoIncrement"] = "AUTO_INCREMENT"
-        self.__column["primary_key"] = "PRIMARY KEY"
+        """Coluna chamada 'ID' do tipo BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY"""
+        col = "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY"
+        self.columns.append(col)
+        return
 
+    def string(self, name: str, qnt: int = 255):
+        """Coluna do tipo 'VARCHAR'
+
+        Args:
+            name (str): nome da coluna
+            qnt (int, optional): quantidade de caracteres aceitos. Defaults to 255.
+
+        Returns:
+            _type_: _description_
+        """
+        col = "{} VARCHAR({})".format(name, qnt)
+        self.columns.append(col)
         return self
 
-    def string(self, name, qnt: int = 255):
-        self.__column["name"] = name
-        self.__column["type"] = f"VARCHAR({qnt})"
-        self.__column["isNull"] = "NOT NULL"
+    def bigInteger(self, name: str):
+        """Coluna do tipo 'BIGINT'
 
+        Args:
+            name (str): nome da coluna
+        """
+        col = "{} BIGINT".format(name)
+        self.columns.append(col)
         return self
 
-    def bigInteger(self, name):
-        self.__column["name"] = name
-        self.__column["type"] = f"BIGINT"
-        self.__column["isNull"] = "NOT NULL"
+    def bigIntegerUnsigned(self, name: str):
+        """Coluna do tipo 'BIGINT UNSIGNE'
 
+        Args:
+            name (str): nome da coluna
+        """
+        col = "{} BIGINT UNSIGNED".format(name)
+        self.columns.append(col)
         return self
 
-    def bigIntegerUnisigned(self, name):
-        self.__column["name"] = name
-        self.__column["type"] = f"BIGINT UNSIGNED"
-        self.__column["isNull"] = "NOT NULL"
+    def text(self, name: str):
+        """Coluna do tipo 'TEXT'
 
-        return self
-
-    def text(self, name):
-        self.__column["name"] = name
-        self.__column["type"] = f"TEXT"
-        self.__column["isNull"] = "NOT NULL"
-
+        Args:
+            name (str): nome da coluna
+        """
+        col = "{} TEXT".format(name)
+        self.columns.append(col)
         return self
 
     def enum(self, name: str, values: list):
+        """Coluna do tipo 'ENUM'
+
+        Args:
+            name (str): nome da coluna
+            values (list[str]): lista de str com valores aceitos
+        """
         str_values = ", ".join(map(lambda x: f'"{x}"', values))
-
-        self.__column["name"] = name
-        self.__column["type"] = f"ENUM({str_values})"
-        self.__column["isNull"] = "NOT NULL"
-
+        col = "{} ENUM({})".format(name, str_values)
+        self.columns.append(col)
         return self
 
     def integer(self, name: str, qnt: int = None):
-        self.__column["name"] = name
+        """Coluna do tipo 'INT'
 
+        Args:
+            name (str): nome da coluna
+            qnt (int, optional): quantidade de caracteres aceito. Defaults to None.
+        """
         if qnt != None:
-            self.__column["type"] = f"INT({qnt}) ZEROFILL UNSIGNED"
+            col = "{name} INT({qnt}) ZEROFILL UNSIGNED".format(name, qnt)
         else:
-            self.__column["type"] = f"INT"
-        self.__column["isNull"] = "NOT NULL"
+            col = "{name} INT".format(name)
 
+        self.columns.append(col)
         return self
 
     def datetime(self, name: str):
-        self.__column["name"] = name
-        self.__column["type"] = "DATETIME"
-        self.__column["isNull"] = "NOT NULL"
+        """Coluna do tipo 'DATETIME'
 
+        Args:
+            name (str): nome da coluna
+        """
+        col = "{} DATETIME".format(name)
+        self.columns.append(col)
         return self
 
-    # props das colunas-----------
+    def default(self, value: str):
+        """Propriedade 'DEFAULT' da coluna definindo qual o valor padrão
 
-    def foreign(self, table, key, local_key):
-        self.__column["foreign"] = "FOREIGN KEY ({}) REFERENCES {}({})".format(
-            local_key, table, key)
+        Args:
+            value (str): valor padrão da coluna
+        """
+        if self.columns:
+            last_column = self.columns[-1]
 
-        return self
-
-    def nullable(self):
-        self.__column["isNull"] = "NULL"
-
+            if value.lower() == "null":
+                last_column += " DEFAULT NULL"
+            else:
+                last_column += " DEFAULT '{}'".format(value)
+            self.columns[-1] = last_column
         return self
 
     def unsigned(self):
-        self.__column["unsigned"] = "UNSIGNED"
+        """Propriedade 'UNSIGNED' da coluna definindo que só aceita valores positivos
 
+        Returns:
+            _type_: _description_
+        """
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += " UNSIGNED"
+            self.columns[-1] = last_column
+        return self
+
+    def nullable(self):
+        """Propriedade 'NULL' da coluna definindo aceita valores nulos"""
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += " NULL"
+            self.columns[-1] = last_column
         return self
 
     def comment(self, comment: str):
-        self.__column["comment"] = f"COMMENT '{comment}' "
+        """Propriedade 'COMMENT' da coluna definindo um comentário"""
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += " COMMENT '{}'".format(comment)
+            self.columns[-1] = last_column
         return self
 
-    def unique(self, columns: list = None, name=None):
-        if columns != None or name != None:
+    def unique(self, columns: list = None, name: str = None):
+        """Propriedade ou método para gerar valores unicos em um coluna ou em um conjunto
+
+        Args:
+            columns (list, optional): lista das colunas a serem agrupadas como unicas. Defaults to None.
+            name (str, optional): nome do incide unico. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
+        if columns != None and name != None:
             uniq = ""
             for col in columns:
                 uniq += f"{col}, "
-
             uniq = uniq[:-2]
 
-            self.__column["unique_key"] = f" UNIQUE KEY {name} ()"
-            return self
+            col = " UNIQUE KEY {} ({})".format(name, uniq)
+            self.columns.append(col)
+            return
         else:
-            self.__column["unique"] = f"UNIQUE"
+            if self.columns:
+                last_column = self.columns[-1]
+                last_column += f" UNIQUE"
+                self.columns[-1] = last_column
             return self
 
     def current_timestamp(self):
-        self.__column["current_timestamp"] = "DEFAULT CURRENT_TIMESTAMP"
-
+        """Propriedade para campos de timestamp definindo que devem inserir a hora atual ao inserir um registro"""
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += " DEFAULT CURRENT_TIMESTAMP"
+            self.columns[-1] = last_column
         return self
 
     def update_timestamp(self):
-        self.__column["on_update_timestamp"] = "ON UPDATE CURRENT_TIMESTAMP"
-
+        """Propriedade para campos de timestamp definindo que devem inserir a hora atual ao inserir um registro e atualiza caso o registro seja alterado"""
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += " ON UPDATE CURRENT_TIMESTAMP"
+            self.columns[-1] = last_column
         return self
 
-    # rollback--------------------
+    def foreign(self, col_local: str):
+        """Metodo para gerar um relacionamento entre tabelas
 
-    def addColumn(self):
-        self.__column["add"] = "ADD COLUMN "
+        Args:
+            col_local (str): coluna local da migration
+        """
 
-        return self
-
-    def dropColumn(self, name):
-        self.__column["drop"] = "DROP COLUMN {} ".format(name)
-        return self
-
-    def after(self, column: str):
-        self.__column["after"] = f"AFTER {column}"
-        return self
-
-    def first(self, column: str):
-        self.__column["first"] = f"FIRST {column}"
-        return self
-
-    def dropTableIfExists(self):
-        self.__sql = "DROP TABLE IF EXISTS {}".format(self.__table__)
-
-    # utils ----------------------
-
-    def color(self, code=""):
-        """Cores para usar no terminal"""
-
-        if code == "green":
-            return "\033[0;32m"
-
-        elif code == "yellow":
-            return "\033[0;33m"
-
-        elif code == "red":
-            return "\033[0;31m"
-
+        if self.__type__ == "create":
+            col = "FOREIGN KEY ({})".format(col_local)
         else:
-            return "\033[m"
+            col = "ALTER TABLE {} ADD FOREIGN KEY ({})".format(
+                self.__table__, col_local
+            )
+        self.columns.append(col)
+        return self
 
-    def create_table_migrations(self):
-        try:
-            sql = """
-                CREATE table if not exists _migrations_ (
-                id BIGINT unsigned not null auto_increment,
-                date DATETIME not null,
-                migration VARCHAR(255) not null unique,
-                description VARCHAR(255) null,
-                PRIMARY KEY (`id`)
-                );
-            """
-            Conn(conn=self.__conn).getQuery(sql, {}).execute_create()
-            return True
-        except Exception as err:
-            print("create_table_migrations: "+str(err))
-            return False
+    def references(self, table: str):
+        """Metodo encadeado do foreign que seleciona qual a tabela a ser relacionada
 
-    def drop_table_migrations(self):
-        try:
-            sql = "DROP TABLE IF EXISTS _migrations_"
-            Conn(conn=self.__conn).getQuery(sql, None).execute_create()
-            return True
-        except Exception as err:
-            print("drop_table_migrationsstr: "+(err))
-            return False
+        Args:
+            table (str): nome da tabela
+        """
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += f" REFERENCES {table}".format(table)
+            self.columns[-1] = last_column
+        return self
 
-    def migrate(self, dir_migrations):
+    def on(self, col: str):
+        """Metodo encadeado do references que indica qual a coluna na tabela relacionada
 
-        dir_migrations = Path(dir_migrations)
-        hasCreated = self.create_table_migrations()
+        Args:
+            col (str): nome da coluna
+        """
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += " ({})".format(col)
+            self.columns[-1] = last_column
+        return self
 
-        if hasCreated == False:
-            return False
+    def add_column(self):
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column = (
+                "ALTER TABLE {} ADD COLUMN ".format(self.__table__) + last_column
+            )
+            self.columns[-1] = last_column
+        return self
 
-        result = self.execute_all_migrations(dir_migrations)
+    def first(self):
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += f" FIRST"
+            self.columns[-1] = last_column
+        return self
 
-        return result
+    def after(self, col_existing: str):
+        if self.columns:
+            last_column = self.columns[-1]
+            last_column += f" AFTER {col_existing}"
+            self.columns[-1] = last_column
+        return self
 
-    def rollback(self, dir_migrations, steps):
+    def drop_table(self):
+        """Gera a query para dropar uma tabela existente
 
-        dir_migrations = Path(dir_migrations)
+        Args:
+            table (str): nome da tabela
+        """
+        col = "DROP TABLE IF EXISTS {}".format(self.__table__)
+        self.columns.append(col)
+        return
 
-        migrations = Querier(conn=self.__conn).table(
-            '_migrations_').orderBy("id DESC").limit(steps).get()
+    def drop_column(self, col: str):
+        col = "ALTER TABLE {} DROP COLUMN {}".format(self.__table__, col)
+        self.columns.append(col)
+        return
 
-        dir_module = str(dir_migrations).replace("\\", ".")
+    def drop_index(self, name: str):
+        col = "DROP INDEX {} ON {}".format(name, self.__table__)
+        self.columns.append(col)
 
-        for migration in migrations:
-            file = migration['migration']
+    def add_index(self, name: str, columns: list[str], unique: bool = False):
+        if isinstance(columns, str):
+            columns = [columns]
 
-            module, result = self.execute_rollback(f"{dir_module}.{file}")
+        if unique:
+            col = "CREATE UNIQUE INDEX {} ON {} ({})".format(
+                name, self.__table__, ", ".join(columns)
+            )
+        else:
+            col = "CREATE INDEX {} ON {} ({})".format(
+                name, self.__table__, ", ".join(columns)
+            )
+        self.columns.append(col)
+        return
 
-            if result == False:
-                print(result)
-                return False
-            print(f"{file} {self.color('yellow')}[Rollbacking]{self.color()}")
-            self.delete_migration_executed(migration['id'])
+
+class Migrater:
+
+    def __init__(self, conn: dict, dir_migrations: str) -> None:
+
+        self.console = Console()
+        self.__setup_logging()
+
+        self.__rollback__ = False
+        self.__conn = conn
+        self.__steps = None
+
+        self.migrations = glob.glob(os.path.join(dir_migrations, "*.py"))
+        self.dir_module = str(dir_migrations).replace("\\", ".").replace("/", ".")
+
+    def __setup_logging(self) -> None:
+        logging.basicConfig(
+            filename="logs/KassOrm.log",
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - Migrate() -%(message)s",
+        )
+
+    def execute(self, is_fresh_migrate: bool = False) -> bool:
+        """Executa as migrações de um diretório.
+
+        Args:
+            fresh (bool): Se True, realiza uma recriação completa do banco de dados.
+
+        Returns:
+            bool: True se a execução for bem-sucedida.
+        """
+        self.__create_table_migrations()
+
+        migration_rounds = (
+            self.__execute_fresh_migrations()
+            if is_fresh_migrate
+            else self.__execute_normal_migrations()
+        )
+
+        for migration_round in migration_rounds:
+            if migration_round > 0:
+                self.__rollback__ = False
+                self.migrations.reverse()
+
+            if self.__rollback__ == False:
+
+                for migration_file in self.migrations:
+                    migration_path = Path(migration_file)
+                    migration_name = migration_path.stem
+
+                    if not self.__has_migration_saved(migration_name):
+                        migration_instance, result = self.__up_or_down(migration_path)
+                        if result:
+                            self.__save_migration_executed(
+                                migration_name, migration_instance.__comment__
+                            )
+            else:
+                for index, migration_file in enumerate(self.migrations):
+                    if isinstance(self.__steps, int):
+                        if index >= self.__steps:
+                            break
+                    if isinstance(self.__steps, str):
+                        if self.__steps == Path(migration_file).stem:
+                            break
+
+                    migration_path = Path(migration_file)
+                    migration_name = migration_path.stem
+
+                    if self.__has_migration_saved(migration_name):
+                        migration_instance, result = self.__up_or_down(migration_path)
+                        if result:
+                            self.__delete_migration_executed(migration_name)
+                        else:
+                            if self.__steps != None:
+                                self.__steps += 1
 
         return True
+
+    def __execute_fresh_migrations(self) -> int:
+        rounds = range(2)
+        self.rollback()
+        self.console.print("Freshing migrations", style="yellow")
+        return rounds
+
+    def __execute_normal_migrations(self) -> int:
+        rounds = range(1)
+        if self.__rollback__:
+            self.console.print("Rolling back migrations", style="yellow")
+        else:
+            self.console.print("Executing migrations", style="yellow")
+
+        return rounds
+
+    def rollback(self, steps: int | str = None) -> bool:
+        """Reverte um número específico de migrações.
+
+        Args:
+            steps (int): Número de migrações a reverter.
+        """
+        self.__rollback__ = True
+        self.__steps = steps
+        self.migrations.reverse()
+        return self
+
+    def __up_or_down(self, migration: str) -> tuple["Migrater", bool]:
+        """Determina se a execução da migtation é para acrescentar (up) ou retirar (down) items de uma tabela
+
+        Args:
+            migration (str): nome da migration
+
+        Returns:
+            Migration, str: instância de Migration e a query a ser executada
+        """
+        migration_file = os.path.basename(migration).replace(".py", "")
+        mod_file = self.dir_module + "." + migration_file
+
+        module = importlib.import_module(mod_file)
+        instance_migration = module.migrate()
+
+        if self.__rollback__:
+            instance = instance_migration.down()
+            return instance, self.__query_down(instance)
+        else:
+            instance = instance_migration.up()
+            return instance, self.__query_up(instance)
+
+    def __query_down(self, Migration: "Migration") -> bool:
+        """Gera a query para retirada de itens da tabela/banco de dados
+
+        Args:
+            Migration (Migration): instância da classe Migration
+
+        Returns:
+            str: query
+        """
+        res = False
+        if Migration.__type__ == "create":
+
+            if (
+                Migration.columns[0].startswith("DROP")
+                or Migration.columns[0].startswith("CREATE")
+                or Migration.columns[0].startswith("ALTER")
+            ):
+                query = ", ".join(Migration.columns)
+                res = Conn(self.__conn).set_query(query).execute().exec()
+                if not res:
+                    self.console.print(
+                        f"Error in query execution: {query}", style="red"
+                    )
+                    return
+            else:
+                query = "ALTER TABLE {} ".format(Migration.__table__) + ", ".join(
+                    Migration.columns
+                )
+                res = Conn(self.__conn).set_query(query).execute().exec()
+                if not res:
+                    self.console.print("Migration {} execution [FAIL]", style="red")
+                    error_traceback = traceback.format_exc()
+                    self.console.print(
+                        f"Error in query execution: {error_traceback}", style="red"
+                    )
+                    return
+
+        else:
+            for query in Migration.columns:
+                res = Conn(self.__conn).set_query(query).execute().exec()
+                if res != True:
+                    self.console.print(res, style="red")
+                    return
+
+        return res
+
+    def __query_up(self, Migration: "Migration") -> bool:
+        """Gera a query para adição de itens da tabela/banco de dados
+
+        Args:
+            Migration (Migration): instância da classe Migration
+
+        Returns:
+            str: query
+        """
+
+        if Migration.__type__ == "create":
+            query = "CREATE TABLE IF NOT EXISTS {}"
+            query = (
+                query.format(Migration.__table__)
+                + " ("
+                + ", ".join(Migration.columns)
+                + ")"
+            )
+            res = Conn(self.__conn).set_query(query).execute().exec()
+            if not res:
+                self.console.print("Migration not executed [FAIL]", style="red")
+                raise Exception(f"Error in query execution: {query}")
+        else:
+            for query in Migration.columns:
+                res = Conn(self.__conn).set_query(query).execute().exec()
+                if res != True:
+                    self.console.print("Migration not executed [FAIL]", style="red")
+                    raise Exception(res)
+
+        return True
+
+    def __create_table_migrations(self) -> bool:
+        """Cria a tabela parametro das migrations executadas"""
+        query = """
+                CREATE table if not exists _migrations_ (
+                    id BIGINT unsigned not null auto_increment,
+                    date DATETIME not null,
+                    migration VARCHAR(255) not null unique,
+                    description VARCHAR(255) null,
+                    PRIMARY KEY (`id`)
+                );
+            """
+        return Conn(self.__conn).set_query(query).execute().create()
+
+    def __truncate_table_migrations(self) -> bool:
+        query = "TRUNCATE _migrations_"
+        return Conn(self.__conn).set_query(query).execute().drop()
+
+    def __has_migration_saved(self, migration_name: str) -> bool:
+        """Verifica se há registro de execução de uma migration
+
+        Args:
+            migration_name (str): nome do arquivo da migration
+
+        Returns:
+            bool: se obteve sucesso ou falha
+        """
+
+        query = "SELECT * FROM _migrations_ WHERE migration = %(migration)s"
+        data = (
+            Conn(self.__conn)
+            .set_query(query, {"migration": migration_name})
+            .execute()
+            .fetch_one()
+        )
+
+        if data == None:
+            return False
+
+        self.console.print(f"Migration {migration_name} [EXISTS] ")
+        return True
+
+    def __save_migration_executed(
+        self, migration_name: str, description: str = ""
+    ) -> bool:
+        """Salva uma migration no banco para posterior verificação
+
+        Args:
+            migration_name (str): nome do arquivo da migration
+            description (str): descrição informada na migration na prop __comment__
+
+        Returns:
+            bool: se obteve sucesso ou falha
+        """
+        if self.__rollback__ == False:
+            query = """INSERT INTO _migrations_ (date, migration, description) VALUES (NOW(), %(migration)s, %(description)s)"""
+            res = (
+                Conn(self.__conn)
+                .set_query(
+                    query, {"migration": migration_name, "description": description}
+                )
+                .execute()
+                .insert()
+            )
+
+            if res:
+                self.console.print(
+                    f"Migration {migration_name} executed [OK]", style="green"
+                )
+
+        return res
+
+    def __delete_migration_executed(self, migration_name: str) -> bool:
+        if self.__rollback__ == True:
+            query = "DELETE FROM _migrations_ WHERE migration = %(migration)s"
+            res = (
+                Conn(self.__conn)
+                .set_query(query, {"migration": migration_name})
+                .execute()
+                .delete()
+            )
+        if res:
+            self.console.print(
+                f"Migration {migration_name} dropped [OK]", style="yellow"
+            )
+
+        return res
+
+
+class Migration(Properties):
+
+    __type__ = None
+    __table__ = None
+    __comment__ = None
+    __connection__ = None
+
+    def __init__(self) -> None:
+        self.columns = []
+
+    def up(self):
+        """Metodo de adição de itens no banco"""
+        return self
+
+    def down(self):
+        """Metodo para retirarda de itens no banco"""
+        return self

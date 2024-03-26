@@ -152,5 +152,8 @@ cython_debug/
 #.idea/
 
 
-_kassorm_
-_tests_results_
+.txt
+pytest.ini
+.vscode
+desktop.ini
+_app_test_
