@@ -100,6 +100,31 @@ class Properties:
         self.columns.append(col)
         return self
 
+    def date(self, name: str):
+        col = "{} DATE NOT NULL ".format(name)
+        self.columns.append(col)
+        return self
+
+    def longtext(self, name: str):
+        col = "{} LONGTEXT NOT NULL ".format(name)
+        self.columns.append(col)
+        return self
+
+    def mediumtext(self, name: str):
+        col = "{} MEDIUMTEXT NOT NULL ".format(name)
+        self.columns.append(col)
+        return self
+
+    def decimal(self, name: str):
+        col = "{} DECIMAL NOT NULL ".format(name)
+        self.columns.append(col)
+        return self
+
+    def float(self, name: str):
+        col = "{} FLOAT NOT NULL ".format(name)
+        self.columns.append(col)
+        return self
+
     def default(self, value: str):
         """Propriedade 'DEFAULT' da coluna definindo qual o valor padrão
 
