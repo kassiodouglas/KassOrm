@@ -134,8 +134,9 @@ class Querier:
                 col = list(item.keys())[0]
                 key_param = f"{col}_{idx}"
 
-                operator = operator if idx > 0 else ""
-                query = f" {operator} {col} = %({key_param})s"
+                operatorloop = operator if idx > 0 else ""
+
+                query = f" {operatorloop} {col} = %({key_param})s"
 
                 self.wheres_cols.append(query)
                 self.wheres_param.append({key_param: item[col]})
@@ -473,7 +474,7 @@ class Querier:
             # raise Exception("Columns not configured")
 
         params_list = []
-        query = f"SELECT {', '.join(self.columns)} FROM {self.table_name}"
+        query = f"SELECT * FROM {self.table_name}"
 
         for param_dict in self.wheres_param:
             params_list.append(param_dict)
@@ -506,7 +507,9 @@ class Querier:
             list[dict]: Uma lista de dicionários representando os resultados da consulta.
         """
         query, params = self.__get_data()
-        return self.conn.set_query(query=query, params=params).execute().fetch_all()
+
+        data = self.conn.set_query(query=query, params=params).execute().fetch_all()
+        return data
 
     def first(self) -> dict | None:
         """

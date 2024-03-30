@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "KassOrm"
-version = "1.1.2"
+version = "1.1.4"
 description = "Gerenciador de banco de dados relacional"
 authors = ["kassiodouglas <kass.doug@gmail.com>"]
 license = "MIT"

@@ -29,7 +29,7 @@ class Properties:
         Returns:
             _type_: _description_
         """
-        col = "{} VARCHAR({})".format(name, qnt)
+        col = "{} VARCHAR({}) NOT NULL ".format(name, qnt)
         self.columns.append(col)
         return self
 
@@ -39,7 +39,7 @@ class Properties:
         Args:
             name (str): nome da coluna
         """
-        col = "{} BIGINT".format(name)
+        col = "{} BIGINT NOT NULL".format(name)
         self.columns.append(col)
         return self
 
@@ -49,7 +49,7 @@ class Properties:
         Args:
             name (str): nome da coluna
         """
-        col = "{} BIGINT UNSIGNED".format(name)
+        col = "{} BIGINT UNSIGNED NOT NULL".format(name)
         self.columns.append(col)
         return self
 
@@ -59,7 +59,7 @@ class Properties:
         Args:
             name (str): nome da coluna
         """
-        col = "{} TEXT".format(name)
+        col = "{} TEXT NOT NULL".format(name)
         self.columns.append(col)
         return self
 
@@ -71,7 +71,7 @@ class Properties:
             values (list[str]): lista de str com valores aceitos
         """
         str_values = ", ".join(map(lambda x: f'"{x}"', values))
-        col = "{} ENUM({})".format(name, str_values)
+        col = "{} ENUM({}) NOT NULL".format(name, str_values)
         self.columns.append(col)
         return self
 
@@ -83,9 +83,9 @@ class Properties:
             qnt (int, optional): quantidade de caracteres aceito. Defaults to None.
         """
         if qnt != None:
-            col = "{name} INT({qnt}) ZEROFILL UNSIGNED".format(name, qnt)
+            col = "{} INT({}) ZEROFILL UNSIGNED NOT NULL".format(name, qnt)
         else:
-            col = "{name} INT".format(name)
+            col = "{} INT NOT NULL".format(name)
 
         self.columns.append(col)
         return self
@@ -96,7 +96,7 @@ class Properties:
         Args:
             name (str): nome da coluna
         """
-        col = "{} DATETIME".format(name)
+        col = "{} DATETIME NOT NULL".format(name)
         self.columns.append(col)
         return self
 
@@ -132,7 +132,7 @@ class Properties:
         """Propriedade 'NULL' da coluna definindo aceita valores nulos"""
         if self.columns:
             last_column = self.columns[-1]
-            last_column += " NULL"
+            last_column = last_column.replace("NOT NULL", "NULL")
             self.columns[-1] = last_column
         return self
 
@@ -474,7 +474,7 @@ class Migrater:
                 + ")"
             )
             res = Conn(self.__conn).set_query(query).execute().exec()
-            if not res:
+            if res != True:
                 self.console.print("Migration not executed [FAIL]", style="red")
                 raise Exception(f"Error in query execution: {query}")
         else:
